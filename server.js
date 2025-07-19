@@ -28,16 +28,11 @@ app.use(session({
 
 // SQL Server Configuration
 const config = {
-  user: 'sa',
-  password: 'YourPassword1',
-  server: 'localhost',
+  server: process.env.DB_SERVER || 'siza-server-123.database.windows.net',
+  user: process.env.DB_USER || 'sizaadmin',
+  password: process.env.DB_PASSWORD || 'YourPassword123!',
   database: 'SIZA',
-  port: 1433,
-  options: {
-    encrypt: true,
-    trustServerCertificate: true,
-    enableArithAbort: true
-  }
+  options: { encrypt: true }
 };
 
 
