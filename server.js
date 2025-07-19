@@ -1,0 +1,1846 @@
+const express = require('express');
+const sql = require('mssql');
+const cors = require('cors');
+const fetch = require('node-fetch');
+const { connect } = require('http2');
+
+const app = express();
+//payload
+app.use(express.json({ limit: '64mb' }));
+app.use(express.urlencoded({ limit: '64mb', extended: true }));
+app.use(cors());
+
+const session = require('express-session');
+const cookieParser = require('cookie-parser');
+app.use(cookieParser());
+app.use(session({
+  secret: 'cookie-123',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: false, // Should be true in production with HTTPS
+    sameSite: 'lax', // Add this for cross-site cookies
+    maxAge: 24 * 60 * 60 * 1000
+  },
+  store: new session.MemoryStore() // Explicitly declare store
+}));
+
+
+// SQL Server Configuration
+const config = {
+  user: 'sa',
+  password: 'YourPassword1',
+  server: 'localhost',
+  database: 'SIZA',
+  port: 1433,
+  options: {
+    encrypt: true,
+    trustServerCertificate: true,
+    enableArithAbort: true
+  }
+};
+
+
+app.use(cors({
+  origin: true, // Or true for all origins
+  credentials: true, // Important for sessions
+  methods: ['GET', 'POST', 'OPTIONS']
+}));
+
+
+// Authentication middleware
+const requireAuth = (req, res, next) => {
+  if (!req.session?.user?.id) { // Updated to match your session structure
+    return res.status(401).json({
+      success: false,
+      message: 'Unauthorized - Please login again'
+    });
+  }
+  next();
+};
+
+app.use(express.json());
+app.use(cors());
+
+// Registration Endpoint
+app.post('/register', async (req, res) => {
+  const { fullName, email, password, phoneNumber, role, dob, homeAddress, imageBase64 } = req.body;
+  const Username = email.split("@")[0];
+  const userType = 'CommunityMember';
+  console.log('data: ', req.body);
+
+
+  try {
+    const pool = await sql.connect(config);
+    //insert user first
+    const usersResult = await pool.request()
+      .input('FullName', sql.VarChar, fullName)
+      .input('Email', sql.VarChar, email)
+      .input('Username', sql.VarChar, Username)
+      .input('PhoneNumber', sql.VarChar, phoneNumber)
+      .input('Passcode', sql.VarChar, password)
+      .input('UserType', sql.VarChar, userType)
+      .input('CreatedAt', sql.DateTime, new Date())
+      .input('ProfilePhoto', sql.VarChar, imageBase64)
+      .input('AcceptedTerms', sql.VarChar, 'No')
+      .query(`
+           INSERT INTO [dbo].[Users]
+           (FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto, AcceptedTerms)
+           OUTPUT INSERTED.UserID
+           VALUES
+           (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, @CreatedAt, @ProfilePhoto, @AcceptedTerms)
+            `);
+
+    const userID = usersResult.recordset[0].UserID;
+    if (userType === 'CommunityMember') {
+      await pool.request()
+        .input('UserID', sql.BigInt, userID)
+        .input('Role', sql.VarChar, role)
+        .input('DOB', sql.Date, dob)
+        .input('HomeAddress', sql.VarChar, homeAddress)
+        .input('TrustedContacts', sql.VarChar, '0')
+        .query(`
+                    INSERT INTO [dbo].[CommunityMember]
+                    (UserID, Role, DOB, HomeAddress, TrustedContacts)
+                    VALUES
+                    (@UserID, @Role, @DOB, @HomeAddress, @TrustedContacts) 
+                    `);
+    }
+    res.status(201).json({ message: 'User registered successfully.' });
+  }
+  catch (err) {
+    console.error('Registration error:', err);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.put('/acceptTerms', async (req, res) => {
+  const { userID } = req.body;
+
+  if (!userID) {
+    return res.status(400).json({ success: false, message: 'UserID is required.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.BigInt, userID)
+      .query(`
+                UPDATE [dbo].[Users]
+                SET AcceptedTerms = 'Yes'
+                WHERE UserID = @UserID
+            `);
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ success: false, message: 'No user found with the provided ID.' });
+    }
+
+    res.status(200).json({ success: true, message: 'Terms accepted successfully.' });
+  } catch (err) {
+    console.error('Error accepting terms:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+
+app.use(express.json());
+app.use(cors());
+
+app.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('Email', sql.VarChar, email)
+      .input('Password', sql.VarChar, password)
+      .query(`
+                SELECT UserID, FullName, Email, UserType 
+                FROM [dbo].[Users] 
+                WHERE Email = @Email AND Passcode = @Password
+            `);
+
+    if (result.recordset.length === 0) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+    }
+
+    const user = result.recordset[0];
+    // Store user in session
+    req.session.user = {
+      id: user.UserID,
+      email: user.Email,
+      role: user.UserType
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Login successful!',
+      user: {
+        id: user.UserID,
+        name: user.FullName,
+        email: user.Email,
+        role: user.UserType,
+      }
+
+    });
+
+  } catch (err) {
+    console.error('Login error:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+app.put('/updateUser', async (req, res) => {
+  const { userID, fullName, phoneNumber, username, dob, homeAddress, imageBase64 } = req.body;
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Update Users table
+    await pool.request()
+      .input('UserID', sql.BigInt, userID)
+      .input('FullName', sql.VarChar, fullName)
+      .input('Username', sql.VarChar, username)
+      .input('PhoneNumber', sql.VarChar, phoneNumber)
+      .input('ProfilePhoto', sql.VarChar, imageBase64)
+      .query(`
+                UPDATE [dbo].[Users]
+                SET FullName = @FullName,
+                    Username = @Username,
+                    PhoneNumber = @PhoneNumber,
+                    ProfilePhoto = @ProfilePhoto
+                WHERE UserID = @UserID
+            `);
+
+    // Update CommunityMember table
+    await pool.request()
+      .input('UserID', sql.BigInt, userID)
+      .input('DOB', sql.Date, dob)
+      .input('HomeAddress', sql.VarChar, homeAddress)
+      .query(`
+                UPDATE [dbo].[CommunityMember]
+                SET DOB = @DOB,
+                    HomeAddress = @HomeAddress
+                WHERE UserID = @UserID
+            `);
+
+    res.status(200).json({ message: 'User updated successfully.' });
+
+  } catch (err) {
+    console.error('Update error:', err);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+
+app.post('/addReport', async (req, res) => {
+  const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus } = req.body;
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Assign the query result to `result`
+    const result = await pool.request()
+      .input('ReporterID', sql.Int, reporterID)
+      .input('EmergencyType', sql.VarChar, emergencyType)
+      .input('EmerDescription', sql.VarChar, emerDescription)
+      .input('MediaPhoto', sql.VarChar, mediaPhoto)
+      .input('MediaVoice', sql.VarChar, mediaVoice)
+      .input('SharedWith', sql.VarChar, sharedWith)
+      .input('ReportLocation', sql.VarChar, reportLocation)
+      .input('ReportStatus', sql.VarChar, reportStatus)
+      .query(`
+                INSERT INTO [dbo].[Report]
+                (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status)
+                OUTPUT INSERTED.ReportID
+                VALUES
+                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus)
+            `);
+
+    const insertedReportID = result.recordset[0].ReportID;
+
+    res.status(201).json({
+      message: 'Report submitted successfully.',
+      reportID: insertedReportID
+    });
+  } catch (err) {
+    console.error('Add report error:', err);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+
+app.post('/addTrustedContact', async (req, res) => {
+  const { fName, phoneNum, emailAdd, isMem, userID } = req.body;
+  console.log("Received Trusted contact info: ", req.body);
+
+  if (!fName || !phoneNum || !isMem || !userID) {
+    return res.status(400).json({
+      message: 'Required fields are missing: Full name, Phone Number, isMember, or userID.'
+    });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const trustedResult = await pool.request()
+      .input('fullName', sql.VarChar, fName)
+      .input('phoneNumber', sql.VarChar, phoneNum)
+      .input('emailAddress', sql.VarChar, emailAdd || null)
+      .input('isMember', sql.VarChar, isMem)
+      .input('userId', sql.BigInt, userID)
+      .query(`
+                INSERT INTO [dbo].[trustedContact]
+                (fullName, phoneNumber, emailAddress, isMember, userId)
+                OUTPUT INSERTED.trustedContactID
+                VALUES
+                (@fullName, @phoneNumber, @emailAddress, @isMember, @userId)
+            `);
+
+    console.log("Trusted contact added, ID:", trustedResult.recordset[0].trustedContactID);
+    res.status(201).json({
+      success: true,
+      trustedContactID: trustedResult.recordset[0].trustedContactID
+    });
+  } catch (err) {
+    console.error('Error submitting trusted contact:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+app.post('/addNotification', async (req, res) => {
+  const { userIds, notiTitle, msg, readStatus, reportid, reporterID } = req.body;
+  console.log('Received user data: ', req.body);
+
+  const tokens = userIds.split(' ');
+  const insertedNotificationIDs = [];
+
+  try {
+    const pool = await sql.connect(config);
+
+    for (let i = 0; i < tokens.length; i++) {
+      const userId = parseInt(tokens[i]);
+      if (parseInt(reporterID) === userId) continue;
+      if (!isNaN(userId)) {
+        const result = await pool.request()
+          .input('notiTitle', sql.VarChar, notiTitle)
+          .input('msg', sql.VarChar, msg)
+          .input('readStatus', sql.VarChar, readStatus)
+          .input('createdDate', sql.DateTime, new Date())
+          .input('userId', sql.BigInt, userId)
+          .input('reportID', sql.BigInt, reportid)
+          .query(`
+                        INSERT INTO [dbo].[Notification]
+                        (notiTitle, msg, readStatus, createdDate, reportID, userId)
+                        OUTPUT INSERTED.notificationID
+                        VALUES
+                        (@notiTitle, @msg, @readStatus, @createdDate, @reportID, @userId)
+                    `);
+
+        console.log("Notification added for UserID", userId, "-> ID:", result.recordset[0].notificationID);
+        insertedNotificationIDs.push(result.recordset[0].notificationID);
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      insertedNotificationIDs
+    });
+  } catch (err) {
+    console.error('Error submitting notification:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+
+app.get('/getTrustedContacts', async (req, res) => {
+  const userId = parseInt(req.query.userId);
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ message: 'Missing or invalid userID.' });
+  }
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`SELECT * FROM [dbo].[trustedContact] WHERE userId = @userId`);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: 'Trusted contacts not found.' });
+    }
+    res.status(200).json({ success: true, TrustedContacts: result.recordset });
+  }
+  catch (err) {
+    console.error('Error fetching trusted contacts:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+app.get('/getComMembers', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .query(`SELECT * FROM [dbo].[CommunityMember]`);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: 'Community members not found.' });
+    }
+    res.status(200).json({ success: true, CommunityMember: result.recordset });
+  }
+  catch (err) {
+    console.error('Error fetching community members:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+
+app.delete('/deleteTrustedContact', async (req, res) => {
+  const { id } = req.query;
+
+  if (!id) {
+    return res.status(400).json({
+      message: 'Trusted contact ID is required.'
+    });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const deleteResult = await pool.request()
+      .input('trustedContactID', sql.BigInt, id)
+      .query(`
+                DELETE FROM [dbo].[trustedContact]
+                WHERE trustedContactID = @trustedContactID
+            `);
+
+    if (deleteResult.rowsAffected[0] === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Trusted contact not found.'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Trusted contact deleted successfully.'
+    });
+  } catch (err) {
+    console.error('Error deleting trusted contact:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+app.get('/user', async (req, res) => {
+  const userID = parseInt(req.query.userID);
+
+  try {
+    const pool = await sql.connect(config);
+
+    if (!userID || isNaN(userID)) {
+      // No userID provided or invalid → return all users
+      const result = await pool.request()
+        .query(`SELECT * FROM [dbo].[Users]`);
+      return res.status(200).json({ success: true, Users: result.recordset });
+    }
+
+    // userID provided and valid → return specific user
+    const result = await pool.request()
+      .input('UserID', sql.Int, userID)
+      .query(`SELECT * FROM [dbo].[Users] WHERE UserID = @UserID`);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+    return res.status(200).json({ success: true, User: result.recordset[0] });
+  }
+  catch (err) {
+    console.error('Error fetching user(s):', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+app.get('/comMember', async (req, res) => {
+  const userID = parseInt(req.query.userID);
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('UserID', sql.BigInt, userID)
+      .query(`SELECT * FROM [dbo].[CommunityMember] WHERE UserID=@UserID`);
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ success: false, message: 'CommunityMember not found.' });
+    }
+    return res.status(200).json({ success: true, CommunityMember: result.recordset[0] });
+  }
+  catch (err) {
+    console.error('Error fetching community member:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+app.get('/report', async (req, res) => {
+  const reportId = parseInt(req.query.reportId);
+
+  if (!reportId || isNaN(reportId)) {
+    return res.status(400).json({ message: 'Missing or invalid reportId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('ReportID', sql.Int, reportId)
+      .query('SELECT * FROM [dbo].[Report] WHERE ReportID = @ReportID');
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: 'Report not found.' });
+    }
+
+    res.status(200).json({ success: true, report: result.recordset[0] });
+  } catch (err) {
+    console.error('Error fetching report:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+app.get('/getReports', async (req, res) => {
+  const userId = parseInt(req.query.userId);
+  console.log(userId);
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ message: 'Missing or invalid userId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query('SELECT * FROM [dbo].[Report] WHERE ReporterID = @UserID');
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: 'No reports found for this user.' });
+    }
+
+    res.status(200).json({ success: true, reports: result.recordset });
+  } catch (err) {
+    console.error('Error fetching reports by userId:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+
+app.get('/getNotification', async (req, res) => {
+  const userId = parseInt(req.query.userId);
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ message: 'Missing or invalid userId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('userId', sql.BigInt, userId)
+      .query(`SELECT * FROM [dbo].[Notification] WHERE userId = @userId AND readStatus='unread'`);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: 'No notifications found.' });
+    }
+
+    res.status(200).json({ success: true, notifications: result.recordset });
+  } catch (err) {
+    console.error('Error fetching notifications:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+app.get('/getReporter', async (req, res) => {
+  const reportId = parseInt(req.query.reportId);
+  if (!reportId || isNaN(reportId)) {
+    return res.status(400).json({ message: 'Missing or invalid reportId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('reportId', sql.BigInt, reportId)
+      .query(`
+            SELECT u.*
+            FROM [dbo].[Report] r
+            JOIN Users u ON r.ReporterID = u.UserID
+            WHERE r.ReportID=@reportId
+            `);
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ error: 'No user found for given reportId' });
+    }
+    res.json({ User: result.recordset[0] });
+  }
+  catch (err) {
+    console.error('Error fetching user:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+app.post('/acceptReport', async (req, res) => {
+  const { UserID, res_Location, res_Status, reportID } = req.body;
+  console.log('Received data: ', req.body);
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, UserID)
+      .input('res_Location', sql.VarChar(sql.MAX), res_Location)
+      .input('res_Status', sql.VarChar(sql.MAX), res_Status)
+      .input('reportID', sql.Int, reportID)
+      .query(`
+        INSERT INTO Response (UserID, res_Location, res_Status, reportID)
+        OUTPUT INSERTED.ResponseID
+        VALUES (@UserID, @res_Location, @res_Status, @reportID)
+      `);
+
+    const insertedID = result.recordset[0].ResponseID;
+    res.status(201).json({ ResponseID: insertedID });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database insertion failed' });
+  }
+});
+
+app.get('/responders', async (req, res) => {
+  const reportId = parseInt(req.query.reportId);
+
+  if (!reportId || isNaN(reportId)) {
+    return res.status(400).json({ message: 'Missing or invalid reportId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('reportID', sql.BigInt, reportId)
+      .query(`
+                SELECT * FROM [dbo].[Response]
+                WHERE reportID = @reportID 
+                AND res_Status NOT IN ('Completed', 'Cancelled')
+            `);
+
+    res.json({ success: true, Response: result.recordset });
+  } catch (err) {
+    console.error('Error fetching Responses:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+
+app.post('/addMessage', async (req, res) => {
+  const { ReporterId, ResponderId, ReportId, msg } = req.body;
+  if (!ReporterId || !ResponderId || !ReportId || !msg) {
+    return res.status(400).json({ error: 'reporterID, responderID, reportID and msg are required' });
+  }
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('reporterID', sql.Int, ReporterId)
+      .input('responderID', sql.Int, ResponderId)
+      .input('reportID', sql.Int, ReportId)
+      .input('timeSent', sql.DateTime, new Date())
+      .input('msg', sql.VarChar(sql.MAX), msg) // use max length for msg
+      .query(`
+                INSERT INTO [dbo].[chatMessage] 
+                (reporterID, responderID, reportID, timeSent, msg)
+                OUTPUT INSERTED.msgID
+                VALUES (@reporterID, @responderID, @reportID, @timeSent, @msg)
+            `);
+
+    res.status(201).json({ msgID: result.recordset[0].msgID });
+  }
+  catch (err) {
+    console.error('SQL error', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.get('/getMessages', async (req, res) => {
+  const { reportID } = req.query;  // get from query string
+
+  if (!reportID) {
+    return res.status(400).json({ error: 'reportID is required' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('reportID', sql.Int, parseInt(reportID, 10))
+      .query(`
+                SELECT * FROM [dbo].[chatMessage]
+                WHERE reportID = @reportID
+                ORDER BY timeSent ASC
+            `);
+
+    res.status(200).json(result.recordset);
+  }
+  catch (err) {
+    console.error('SQL error', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+app.put('/notifications/mark-read', async (req, res) => {
+  const { reportID, userId } = req.body;
+  console.log(req.body);
+
+  if (!reportID || !userId) {
+    return res.status(400).json({ success: false, message: 'Missing reportID or userId' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('reportID', sql.Int, reportID)
+      .input('userId', sql.Int, userId)
+      .query(`
+        UPDATE Notification
+        SET readStatus = 'read'
+        WHERE reportID = @reportID AND userId = @userId
+      `);
+
+    res.status(200).json({
+      success: true,
+      message: 'Notification marked as read',
+      rowsAffected: result.rowsAffected[0]
+    });
+  } catch (err) {
+    console.error('Error updating notification status:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+});
+
+
+//******************BROADCAST MESSAGING ENDPOINTS********************//
+
+app.get('/api/current-user', requireAuth, (req, res) => {
+  console.log('Session data:', req.session);
+  res.json({
+    success: true,
+    user: req.session.user
+  });
+});
+
+app.post('/api/messages', requireAuth, async (req, res) => {
+  const { content } = req.body;
+  const channelId = 1; // Melville Emergency Channel
+  const senderId = req.session.user.id; // Get from session
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('ChannelID', sql.Int, channelId)
+      .input('SenderID', sql.Int, senderId)
+      .input('Content', sql.NVarChar(sql.MAX), content)
+      .query(`
+                INSERT INTO Messages (ChannelID, SenderID, Content)
+                OUTPUT INSERTED.MessageID, INSERTED.SentAt
+                VALUES (@ChannelID, @SenderID, @Content)
+            `);
+
+    // Get sender info
+    const senderInfo = await pool.request()
+      .input('UserID', sql.Int, senderId)
+      .query('SELECT FullName FROM Users WHERE UserID = @UserID');
+
+    res.status(201).json({
+      success: true,
+      message: {
+        id: result.recordset[0].MessageID,
+        senderId,
+        senderName: senderInfo.recordset[0]?.FullName || 'Unknown',
+        content,
+        sentAt: result.recordset[0].SentAt,
+        isCurrentUser: true
+      }
+    });
+
+  } catch (err) {
+    console.error('Error sending message:', err);
+    res.status(500).json({ success: false, message: 'Failed to send message' });
+  }
+});
+
+
+// GET /api/messages
+app.get('/api/messages', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  const channelId = 1; // Melville Emergency Channel
+  const senderId = req.session.user.id; // Get fr
+
+  try {
+    const pool = await sql.connect(config);
+
+    // First get all messages
+    const result = await pool.request()
+      .input('ChannelID', sql.Int, channelId)
+      .input('UserID', sql.Int, userId)
+      .query(`
+                SELECT 
+                    m.MessageID as id,
+                    m.SenderID as senderId,
+                    u.FullName as senderName,
+                    m.Content as text,
+                    m.SentAt as time,
+                    CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
+                    CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
+                FROM Messages m
+                JOIN Users u ON m.SenderID = u.UserID
+                LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+                WHERE m.ChannelID = @ChannelID
+                ORDER BY m.SentAt ASC
+            `);
+
+    // Identify unread messages not sent by current user
+    const unreadMessages = result.recordset.filter(msg =>
+      !msg.isRead && !msg.isCurrentUser
+    );
+
+    // Mark them as read
+    if (unreadMessages.length > 0) {
+      await Promise.all(
+        unreadMessages.map(msg =>
+          pool.request()
+            .input('MessageID', sql.Int, msg.id)
+            .input('UserID', sql.Int, userId)
+            .query(`
+                            IF NOT EXISTS (
+                                SELECT 1 FROM MessageReadStatus 
+                                WHERE MessageID = @MessageID AND UserID = @UserID
+                            )
+                            BEGIN
+                                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                                VALUES (@MessageID, @UserID, GETDATE())
+                            END
+                        `)
+        )
+      );
+
+      // Update the isRead status in the response
+      result.recordset.forEach(msg => {
+        if (unreadMessages.some(m => m.id === msg.id)) {
+          msg.isRead = true;
+        }
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      messages: result.recordset
+    });
+
+  } catch (err) {
+    console.error('Error fetching messages:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch messages' });
+  }
+});
+
+// Mark message as read
+app.post('/api/messages/read', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  const { messageId } = req.body;
+
+  try {
+    const pool = await sql.connect(config);
+
+    // First check if the message exists
+    const messageExists = await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .query('SELECT 1 FROM Messages WHERE MessageID = @MessageID');
+
+    if (messageExists.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Message not found'
+      });
+    }
+
+    // Check if already marked as read to avoid duplicates
+    const alreadyRead = await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .input('UserID', sql.Int, userId)
+      .query('SELECT 1 FROM MessageReadStatus WHERE MessageID = @MessageID AND UserID = @UserID');
+
+    if (alreadyRead.recordset.length > 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'Message was already marked as read'
+      });
+    }
+
+    // Insert with current timestamp
+    await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .input('UserID', sql.Int, userId)
+      .query(`
+                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                VALUES (@MessageID, @UserID, GETDATE())
+            `);
+
+    res.status(200).json({
+      success: true,
+      readAt: new Date().toISOString()
+    });
+
+  } catch (err) {
+    console.error('Error marking message as read:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark message as read',
+      error: err.message
+    });
+  }
+});
+
+
+// GET /api/messages/unread-count
+app.get('/api/messages/unread-count', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  const channelId = 1; // Melville Emergency Channel
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .input('ChannelID', sql.Int, channelId)
+      .query(`
+                SELECT COUNT(*) as count
+                FROM Messages m
+                LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+                WHERE m.ChannelID = @ChannelID
+                AND m.SenderID != @UserID  -- Only count messages from others
+                AND r.MessageID IS NULL    -- Only count unread messages
+            `);
+
+    res.status(200).json({
+      success: true,
+      count: result.recordset[0].count
+    });
+
+  } catch (err) {
+    console.error('Error counting unread messages:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to count unread messages',
+      error: err.message
+    });
+  }
+});
+
+// POST /api/notifications
+app.post('/api/notifications', async (req, res) => {
+  const { content } = req.body;
+  const channelId = 1; // Melville Emergency Channel
+  const systemUserId = 0; // System user
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('ChannelID', sql.Int, channelId)
+      .input('SenderID', sql.Int, systemUserId)
+      .input('Content', sql.NVarChar(sql.MAX), content)
+      .query(`
+                INSERT INTO Messages (ChannelID, SenderID, Content)
+                OUTPUT INSERTED.MessageID, INSERTED.SentAt
+                VALUES (@ChannelID, @SenderID, @Content)
+            `);
+
+    res.status(201).json({
+      success: true,
+      notification: {
+        id: result.recordset[0].MessageID,
+        content,
+        sentAt: result.recordset[0].SentAt,
+        isSystem: true
+      }
+    });
+
+  } catch (err) {
+    console.error('Error broadcasting notification:', err);
+    res.status(500).json({ success: false, message: 'Failed to broadcast notification' });
+  }
+});
+
+
+
+app.get('/api/messages/latest', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  const lastMessageId = req.query.lastMessageId || 0;
+  const channelId = 1; // Add channel ID
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .input('LastMessageID', sql.Int, lastMessageId)
+      .input('ChannelID', sql.Int, channelId)
+      .query(`
+                SELECT 
+                    m.MessageID as id,
+                    m.SenderID as senderId,
+                    u.FullName as senderName,
+                    m.Content as text,
+                    m.SentAt as time,
+                    CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
+                    CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
+                FROM Messages m
+                JOIN Users u ON m.SenderID = u.UserID
+                LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+                WHERE m.MessageID > @LastMessageID AND m.ChannelID = @ChannelID
+                ORDER BY m.SentAt ASC
+            `);
+
+    // Mark unread messages as read
+    const unreadMessages = result.recordset.filter(msg =>
+      !msg.isRead && !msg.isCurrentUser
+    );
+
+    if (unreadMessages.length > 0) {
+      await Promise.all(
+        unreadMessages.map(msg =>
+          pool.request()
+            .input('MessageID', sql.Int, msg.id)
+            .input('UserID', sql.Int, userId)
+            .query(`
+                            IF NOT EXISTS (
+                                SELECT 1 FROM MessageReadStatus 
+                                WHERE MessageID = @MessageID AND UserID = @UserID
+                            )
+                            BEGIN
+                                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                                VALUES (@MessageID, @UserID, GETDATE())
+                            END
+                        `)
+        )
+      );
+
+      // Update the isRead status in the response
+      result.recordset.forEach(msg => {
+        if (unreadMessages.some(m => m.id === msg.id)) {
+          msg.isRead = true;
+        }
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      messages: result.recordset
+    });
+
+  } catch (err) {
+    console.error('Error fetching latest messages:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch messages' });
+  }
+});
+app.get('/currentReports', async (req, res) => {
+  const { userId } = req.query;
+
+  try {
+    const pool = await sql.connect(config);
+
+    const request = pool.request();
+    request.input('userId', sql.Int, userId);
+
+    const result = await request.query(`
+      SELECT r.* 
+      FROM Response resp
+      JOIN Report r ON r.ReportID = resp.reportID
+      WHERE resp.UserID = @userId AND r.Report_Status='On-going'
+    `);
+
+    res.json({ reports: result.recordset });
+  } catch (err) {
+    console.error('Error fetching reports:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+// Basic Test Endpoint
+app.get('/', (req, res) => {
+  res.json("Hi, I am the backend.");
+});
+
+// Start Server
+app.listen(3000, () => {
+  console.log("Server started on port 3000");
+});
+
+// Test Admin and CommunityMember Registration
+async function testRegistration(payload, label) {
+  console.log(`\n--- Testing ${label} Registration ---`);
+  try {
+    const res = await fetch('http://localhost:3000/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const textData = await res.text();
+    console.log("Raw response:", textData);
+
+    try {
+      const data = JSON.parse(textData);
+      console.log("Parsed data:", data);
+    } catch (jsonErr) {
+      console.error("Error parsing JSON:", jsonErr);
+    }
+
+    if (res.ok) {
+      console.log("Registration successful.");
+    } else {
+      console.error("Registration failed.");
+    }
+  } catch (err) {
+    console.error("Error testing the API:", err);
+  }
+}
+
+
+//***************************TRUSTED USERS FUNCTIONALITY****************************************************** */
+
+// Updated /api/trust-requests/send endpoint
+app.post('/api/trust-requests/send', requireAuth, async (req, res) => {
+  const { username, message } = req.body;
+  const requesterId = req.session.user.id;
+  console.log('sending user data found: ', { username, message, requesterId });
+
+  if (!username) {
+    return res.status(400).json({
+      success: false,
+      message: 'Username is required'
+    });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    // First find the user by username to get their ID
+    const userResult = await pool.request()
+      .input('Username', sql.NVarChar(50), username)
+      .query('SELECT UserID, FullName FROM Users WHERE Username = @Username');
+
+    if (userResult.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const requestedUserId = userResult.recordset[0].UserID;
+    const requestedUserName = userResult.recordset[0].FullName;
+
+    // Check if request already exists
+    const existingRequest = await pool.request()
+      .input('RequesterID', sql.Int, requesterId)
+      .input('RequestedID', sql.Int, requestedUserId)
+      .query(`
+        SELECT RequestID, Status FROM TrustRequests 
+        WHERE RequesterID = @RequesterID AND RequestedID = @RequestedID
+      `);
+
+    if (existingRequest.recordset.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Trust request already exists',
+        requestId: existingRequest.recordset[0].RequestID
+      });
+    }
+
+    // Create new request
+    const result = await pool.request()
+      .input('RequesterID', sql.Int, requesterId)
+      .input('RequestedID', sql.Int, requestedUserId)
+      .input('Message', sql.NVarChar(255), message || null)
+      .query(`
+        INSERT INTO TrustRequests (RequesterID, RequestedID, Message, Status)
+        OUTPUT INSERTED.RequestID
+        VALUES (@RequesterID, @RequestedID, @Message, 'pending')
+      `);
+
+    // Get requester info for notification
+    const requesterInfo = await pool.request()
+      .input('UserID', sql.Int, requesterId)
+      .query('SELECT FullName, Username FROM Users WHERE UserID = @UserID');
+
+    res.status(201).json({
+      success: true,
+      requestId: result.recordset[0].RequestID,
+      requesterName: requesterInfo.recordset[0]?.FullName || requesterInfo.recordset[0]?.Username || 'Unknown',
+      requesterUsername: requesterInfo.recordset[0]?.Username
+    });
+
+  } catch (err) {
+    console.error('Error sending trust request:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send trust request',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/trust-requests/pending', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  console.log(`Fetching pending requests for user ${userId}`);
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Verify user exists first
+    const userExists = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query('SELECT 1 FROM Users WHERE UserID = @UserID');
+
+    if (userExists.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Mark requests as viewed (but don't wait for completion)
+    pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        UPDATE TrustRequests 
+        SET Viewed = 1 
+        WHERE RequestedID = @UserID AND Status = 'pending'
+      `)
+      .catch(err => console.error('Error marking as viewed:', err));
+
+    // Fetch pending requests with requester info
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT 
+          tr.RequestID as requestId,
+          tr.RequesterID as requesterId,
+          u.FullName as requesterName,
+          u.Username as requesterUsername,
+          tr.Message as message,
+          tr.RequestedAt as requestedAt,
+          tr.Viewed as viewed
+        FROM TrustRequests tr
+        JOIN Users u ON tr.RequesterID = u.UserID
+        WHERE tr.RequestedID = @UserID 
+          AND tr.Status = 'pending'
+        ORDER BY tr.RequestedAt DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      requests: result.recordset
+    });
+
+  } catch (err) {
+    console.error('Error in pending requests:', {
+      error: err.message,
+      userId: userId,
+      time: new Date().toISOString()
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch requests',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+app.post('/api/trust-requests/respond', requireAuth, async (req, res) => {
+  const { requestId, accept } = req.body;
+  const userId = req.session.user.id;
+  console.log('Received trust requests response data:', {
+    requestId,
+    accept,
+    userId
+  });
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Verify the request exists and is pending
+    const request = await pool.request()
+      .input('RequestID', sql.Int, requestId)
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT RequesterID FROM TrustRequests 
+        WHERE RequestID = @RequestID 
+          AND RequestedID = @UserID 
+          AND Status = 'pending'
+      `);
+
+    if (request.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Request not found or already responded'
+      });
+    }
+
+    const requesterId = request.recordset[0].RequesterID;
+    const newStatus = accept ? 'approved' : 'declined';
+
+    // Update request status
+    await pool.request()
+      .input('RequestID', sql.Int, requestId)
+      .input('Status', sql.VarChar(20), newStatus)
+      .query(`
+        UPDATE TrustRequests 
+        SET Status = @Status, RespondedAt = GETDATE()
+        WHERE RequestID = @RequestID
+      `);
+
+    if (accept) {
+      // Create trusted relationship if accepted
+      await pool.request()
+        .input('TrustingUserID', sql.Int, requesterId)
+        .input('TrustedUserID', sql.Int, userId)
+        .input('RequestID', sql.Int, requestId)
+        .query(`
+          INSERT INTO TrustedContact 
+          (TrustingUserID, TrustedUserID, RequestID)
+          VALUES (@TrustingUserID, @TrustedUserID, @RequestID)
+        `);
+    }
+
+    res.status(200).json({ success: true });
+
+  } catch (err) {
+    console.error('Error responding to trust request:', err);
+    res.status(500).json({ success: false, message: 'Failed to respond to request' });
+  }
+});
+
+app.get('/api/users/find', requireAuth, async (req, res) => {
+  const { username } = req.query;
+  console.log('Received user data found: ', req.body);
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('Username', sql.NVarChar(50), username)
+      .query('SELECT UserID, FullName FROM Users WHERE Username = @Username');
+
+    if (result.recordset.length > 0) {
+      res.json({
+        success: true,
+        user: result.recordset[0]
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+  } catch (err) {
+    console.error('Error finding user:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error searching for user'
+    });
+  }
+});
+
+app.get('/api/trusted-contacts', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  console.log('getting trusted contacts for user:', userId);
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT 
+          u.UserID as id,
+          u.FullName as fullName,
+          u.Email as email,
+          u.PhoneNumber as phoneNumber,
+          tr.RequestedAt as establishedAt
+        FROM TrustedContact tc
+        JOIN Users u ON tc.TrustedUserID = u.UserID
+        LEFT JOIN TrustRequests tr ON tc.RequestID = tr.RequestID
+        WHERE tc.TrustingUserID = @UserID
+        ORDER BY tr.RequestedAt DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      contacts: result.recordset
+    });
+
+  } catch (err) {
+    console.error('Error fetching trusted contacts:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch contacts',
+      error: err.message
+    });
+  }
+}); app.post('/api/trust-requests/send', requireAuth, async (req, res) => {
+  const { username, message } = req.body;
+  const requesterId = req.session.user.id;
+  console.log('sending user data found: ', { username, message, requesterId });
+
+  if (!username) {
+    return res.status(400).json({
+      success: false,
+      message: 'Username is required'
+    });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    // First find the user by username to get their ID
+    const userResult = await pool.request()
+      .input('Username', sql.NVarChar(50), username)
+      .query('SELECT UserID, FullName FROM Users WHERE Username = @Username');
+
+    if (userResult.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const requestedUserId = userResult.recordset[0].UserID;
+    const requestedUserName = userResult.recordset[0].FullName;
+
+    // Check if request already exists
+    const existingRequest = await pool.request()
+      .input('RequesterID', sql.Int, requesterId)
+      .input('RequestedID', sql.Int, requestedUserId)
+      .query(`
+        SELECT RequestID, Status FROM TrustRequests 
+        WHERE RequesterID = @RequesterID AND RequestedID = @RequestedID
+      `);
+
+    if (existingRequest.recordset.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Trust request already exists',
+        requestId: existingRequest.recordset[0].RequestID
+      });
+    }
+
+    // Create new request
+    const result = await pool.request()
+      .input('RequesterID', sql.Int, requesterId)
+      .input('RequestedID', sql.Int, requestedUserId)
+      .input('Message', sql.NVarChar(255), message || null)
+      .query(`
+        INSERT INTO TrustRequests (RequesterID, RequestedID, Message, Status)
+        OUTPUT INSERTED.RequestID
+        VALUES (@RequesterID, @RequestedID, @Message, 'pending')
+      `);
+
+    // Get requester info for notification
+    const requesterInfo = await pool.request()
+      .input('UserID', sql.Int, requesterId)
+      .query('SELECT FullName, Username FROM Users WHERE UserID = @UserID');
+
+    res.status(201).json({
+      success: true,
+      requestId: result.recordset[0].RequestID,
+      requesterName: requesterInfo.recordset[0]?.FullName || requesterInfo.recordset[0]?.Username || 'Unknown',
+      requesterUsername: requesterInfo.recordset[0]?.Username
+    });
+
+  } catch (err) {
+    console.error('Error sending trust request:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send trust request',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/trust-requests/pending', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  console.log(`Fetching pending requests for user ${userId}`);
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Verify user exists first
+    const userExists = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query('SELECT 1 FROM Users WHERE UserID = @UserID');
+
+    if (userExists.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Mark requests as viewed (but don't wait for completion)
+    pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        UPDATE TrustRequests 
+        SET Viewed = 1 
+        WHERE RequestedID = @UserID AND Status = 'pending'
+      `)
+      .catch(err => console.error('Error marking as viewed:', err));
+
+    // Fetch pending requests with requester info
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT 
+          tr.RequestID as requestId,
+          tr.RequesterID as requesterId,
+          u.FullName as requesterName,
+          u.Username as requesterUsername,
+          tr.Message as message,
+          tr.RequestedAt as requestedAt,
+          tr.Viewed as viewed
+        FROM TrustRequests tr
+        JOIN Users u ON tr.RequesterID = u.UserID
+        WHERE tr.RequestedID = @UserID 
+          AND tr.Status = 'pending'
+        ORDER BY tr.RequestedAt DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      requests: result.recordset
+    });
+
+  } catch (err) {
+    console.error('Error in pending requests:', {
+      error: err.message,
+      userId: userId,
+      time: new Date().toISOString()
+    });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch requests',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+app.post('/api/trust-requests/respond', requireAuth, async (req, res) => {
+  const { requestId, accept } = req.body;
+  const userId = req.session.user.id;
+  console.log('Received trust requests response data:', {
+    requestId,
+    accept,
+    userId
+  });
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Verify the request exists and is pending
+    const request = await pool.request()
+      .input('RequestID', sql.Int, requestId)
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT RequesterID FROM TrustRequests 
+        WHERE RequestID = @RequestID 
+          AND RequestedID = @UserID 
+          AND Status = 'pending'
+      `);
+
+    if (request.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Request not found or already responded'
+      });
+    }
+
+    const requesterId = request.recordset[0].RequesterID;
+    const newStatus = accept ? 'approved' : 'declined';
+
+    // Update request status
+    await pool.request()
+      .input('RequestID', sql.Int, requestId)
+      .input('Status', sql.VarChar(20), newStatus)
+      .query(`
+        UPDATE TrustRequests 
+        SET Status = @Status, RespondedAt = GETDATE()
+        WHERE RequestID = @RequestID
+      `);
+
+    if (accept) {
+      // Create trusted relationship if accepted
+      await pool.request()
+        .input('TrustingUserID', sql.Int, requesterId)
+        .input('TrustedUserID', sql.Int, userId)
+        .input('RequestID', sql.Int, requestId)
+        .query(`
+          INSERT INTO TrustedContact 
+          (TrustingUserID, TrustedUserID, RequestID)
+          VALUES (@TrustingUserID, @TrustedUserID, @RequestID)
+        `);
+    }
+
+    res.status(200).json({ success: true });
+
+  } catch (err) {
+    console.error('Error responding to trust request:', err);
+    res.status(500).json({ success: false, message: 'Failed to respond to request' });
+  }
+});
+
+app.get('/api/users/find', requireAuth, async (req, res) => {
+  const { username } = req.query;
+  console.log('Received user data found: ', req.body);
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('Username', sql.NVarChar(50), username)
+      .query('SELECT UserID, FullName FROM Users WHERE Username = @Username');
+
+    if (result.recordset.length > 0) {
+      res.json({
+        success: true,
+        user: result.recordset[0]
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+  } catch (err) {
+    console.error('Error finding user:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Error searching for user'
+    });
+  }
+});
+
+app.get('/api/trusted-contacts', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  console.log('getting trusted contacts for user:', userId);
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT 
+          u.UserID as id,
+          u.FullName as fullName,
+          u.Email as email,
+          u.PhoneNumber as phoneNumber,
+          tr.RequestedAt as establishedAt
+        FROM TrustedContact tc
+        JOIN Users u ON tc.TrustedUserID = u.UserID
+        LEFT JOIN TrustRequests tr ON tc.RequestID = tr.RequestID
+        WHERE tc.TrustingUserID = @UserID
+        ORDER BY tr.RequestedAt DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      contacts: result.recordset
+    });
+  } catch (err) {
+    console.error('Error fetching trusted contacts:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch contacts',
+      error: err.message
+    });
+  }
+});
+app.get('/trusted-contacts', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.BigInt, userId)
+      .query(`SELECT * FROM [dbo].[TrustedContact] WHERE TrustingUserID=@userId`);
+    res.status(200).json({
+      success: true,
+      contacts: result.recordset
+    });
+  } catch (err) {
+    console.error('Error fetching trusted contacts:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch contacts',
+      error: err.message
+    });
+  }
+});
+app.put('/reports/complete', async (req, res) => {
+  const { reportId } = req.body;
+
+  if (!reportId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing reportId in request body',
+    });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    await pool.request()
+      .input('reportId', sql.Int, reportId)
+      .query(`
+        UPDATE Report
+        SET Report_Status = 'Completed'
+        WHERE ReportID = @reportId
+      `);
+
+    res.status(200).json({
+      success: true,
+      message: 'Report marked as completed.',
+    });
+  } catch (err) {
+    console.error('Error updating report status:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update report status',
+      error: err.message,
+    });
+  }
+  try {
+    const pool = await sql.connect(config);
+
+    await pool.request()
+      .input('reportID', sql.Int, reportId)
+      .query(`
+        UPDATE Response
+        SET res_Status = 'Completed'
+        WHERE reportID = @reportID
+      `);
+
+    res.status(200).json({ success: true, message: 'Responses marked as completed.' });
+  } catch (err) {
+    console.error('Error updating response statuses:', err);
+    res.status(500).json({ success: false, message: 'Failed to update responses', error: err.message });
+  }
+});
+
+/*FEEDBACK ENDPOINTS************************************* */
+app.post('/feedback/submit', async (req, res) => {
+  const { reportId, rating, feedbackText } = req.body;
+
+  // Validate input
+  if (!reportId || !rating) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing required fields (reportId or rating)',
+    });
+  }
+
+  if (rating < 1 || rating > 5) {
+    return res.status(400).json({
+      success: false,
+      message: 'Rating must be between 1 and 5',
+    });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Check if feedback already exists for this report
+    const existingFeedback = await pool.request()
+      .input('reportId', sql.Int, reportId)
+      .query(`
+        SELECT 1 FROM Feedback 
+        WHERE ReportID = @reportId
+      `);
+
+    if (existingFeedback.recordset.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Feedback already submitted for this report',
+      });
+    }
+
+    // Insert the feedback (no need for ReporterID in the table)
+    await pool.request()
+      .input('reportId', sql.Int, reportId)
+      .input('rating', sql.Int, rating)
+      .input('feedbackText', sql.NVarChar(sql.MAX), feedbackText || null)
+      .query(`
+        INSERT INTO Feedback (ReportID, Rating, FeedbackText)
+        VALUES (@reportId, @rating, @feedbackText)
+      `);
+
+    res.status(201).json({
+      success: true,
+      message: 'Feedback submitted successfully',
+    });
+
+  } catch (err) {
+    console.error('Error submitting feedback:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to submit feedback',
+      error: err.message,
+    });
+  }
+});
+
+app.get('/feedback/:reportId', async (req, res) => {
+  const { reportId } = req.params;
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('reportId', sql.Int, reportId)
+      .query(`
+        SELECT 
+          f.FeedbackID,
+          f.Rating,
+          f.FeedbackText,
+          f.CreatedAt,
+          r.ReporterID,
+          u.FullName AS ReporterName
+        FROM Feedback f
+        JOIN Report r ON f.ReportID = r.ReportID
+        JOIN Users u ON r.ReporterID = u.UserID
+        WHERE f.ReportID = @reportId
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No feedback found for this report',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      feedback: result.recordset[0],
+    });
+
+  } catch (err) {
+    console.error('Error fetching feedback:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch feedback',
+      error: err.message,
+    });
+  }
+});
