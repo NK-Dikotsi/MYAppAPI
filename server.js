@@ -1839,3 +1839,442 @@ app.get('/feedback/:reportId', async (req, res) => {
     });
   }
 });
+
+
+//***************************Admin FUNCTIONALITY****************************************************** */
+ // register Admin
+app.post('/register-admin', async (req, res) => {
+    const {
+    fullName,
+    email,
+    password,
+    phoneNumber,
+    imageBase64,
+    acceptedTerms,
+    darkmode = "No",
+  } = req.body;
+
+  const username = email.split("@")[0];
+    const userType = 'admin';
+
+    // Basic input validation
+    if (!fullName || !email || !password || !phoneNumber || !imageBase64 || !darkmode || !acceptedTerms) {
+        return res.status(400).json({ message: 'Missing required fields.' });
+    }
+
+    try {
+        const pool = await sql.connect(config);
+
+        // Check for duplicate email
+        const emailCheck = await pool.request()
+            .input('Email', sql.VarChar, email)
+            .query('SELECT UserID FROM Users WHERE Email = @Email');
+
+        if (emailCheck.recordset.length > 0) {
+            return res.status(409).json({ message: 'Email already registered.' });
+        }
+
+        // Hash the password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Insert new admin
+        const usersResult = await pool.request()
+            .input('FullName', sql.VarChar, fullName)
+            .input('Email', sql.VarChar, email)
+            .input('Username', sql.VarChar, username)
+            .input('PhoneNumber', sql.VarChar, phoneNumber)
+            .input('Passcode', sql.VarChar, hashedPassword)
+            .input('UserType', sql.VarChar, userType)
+            .input('CreatedAt', sql.DateTime, new Date())
+            .input('ProfilePhoto', sql.VarChar, imageBase64)
+            .input('AcceptedTerms', sql.VarChar, acceptedTerms)
+            .query(`
+           INSERT INTO [dbo].[Users]
+           (FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto, AcceptedTerms)
+           OUTPUT INSERTED.UserID
+           VALUES
+           (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, @CreatedAt, @ProfilePhoto, @AcceptedTerms)
+            `);
+
+        const userID = usersResult.recordset[0].UserID;
+        if (userType === 'admin') {
+            await pool.request()
+            .input('UserID', sql.Int, userID)
+            .input('DarkMode', sql.VarChar, 'No')
+            .query(`
+            INSERT INTO [dbo].[ADMIN] (UserID, DarkMode)
+            VALUES (@UserID, @DarkMode)
+            `);
+            return res.status(201).json({ message: 'Admin registered successfully.', userID });
+        }
+
+    } catch (err) {
+        console.error('Admin registration error:', err.message, err.stack);
+        res.status(500).json({ message: 'Internal server error.' });
+    }
+});
+//admin login
+app.post('/login-admin', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Email and password are required.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const userResult = await pool.request()
+      .input('Email', sql.VarChar, email)
+      .query(`
+        SELECT UserID, FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto
+        FROM [dbo].[Users]
+        WHERE Email = @Email AND (UserType = 'admin'  OR UserType = 'CommunityMember')
+      `);
+
+    if (userResult.recordset.length === 0) {
+      return res.status(401).json({ message: 'Invalid credentials.' });
+    }
+
+    const user = userResult.recordset[0];
+    const match = await bcrypt.compare(password, user.Passcode);
+    if (!match) {
+      return res.status(401).json({ message: 'Invalid credentials. P' });
+    }
+
+    if(user.UserType === "CommunityMember"){
+         const communityResult = await pool.request()
+            .input('UserID', sql.Int, user.UserID)
+            .query(`
+                SELECT Role, DOB, HomeAddress, TrustedContacts
+                FROM [dbo].[CommunityMember]
+                WHERE UserID = @UserID
+            `);
+        
+         const role = communityResult.recordset.length > 0 
+            ? communityResult.recordset[0].Role
+            : 'Volunteer';
+
+        const  communitym = communityResult.recordset[0];
+
+        // Return properly structured response
+        res.json({
+        success: true,
+        user: {
+            UserID: user.UserID,
+            FullName: user.FullName,
+            Email: user.Email,
+            Username: user.Username,
+            PhoneNumber: user.PhoneNumber,
+            UserType: user.UserType,
+            CreatedAt: user.CreatedAt,
+            ProfilePhoto: user.ProfilePhoto, // Fixed typo (was 'profile')
+            Role: role,
+            DOB: communitym.DOB,
+            HomeAddress: communitym.HomeAddress, 
+            TrustedContacts: communitym.TrustedContacts,
+        }
+        });
+    }else{
+        const adminResult = await pool.request()
+            .input('UserID', sql.Int, user.UserID)
+            .query(`
+                SELECT DarkMode
+                FROM [dbo].[ADMIN]
+                WHERE UserID = @UserID
+            `);
+
+        const darkMode = adminResult.recordset.length > 0 
+            ? adminResult.recordset[0].DarkMode
+            : 'No';
+
+        // Return properly structured response
+        res.json({
+        success: true,
+        user: {
+            UserID: user.UserID,
+            FullName: user.FullName,
+            Email: user.Email,
+            Username: user.Username,
+            PhoneNumber: user.PhoneNumber,
+            UserType: user.UserType,
+            CreatedAt: user.CreatedAt,
+            ProfilePhoto: user.ProfilePhoto, // Fixed typo (was 'profile')
+            DarkMode: darkMode
+        }
+        });
+    }
+  } catch (err) {
+    console.error('Admin login error:', err);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+// Get user data
+app.get('/api/user/:userId', async (req, res) => {
+  const userId = parseInt(req.params.userId); // Convert to integer
+  
+  // Validate user ID
+  if (isNaN(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('UserID', sql.BigInt, userId) // Use integer type
+      .query(`
+        SELECT u.*, a.DarkMode 
+        FROM Users u
+        LEFT JOIN ADMIN a ON u.UserID = a.UserID
+        WHERE u.UserID = @UserID
+      `);
+    
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error('Error fetching user:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+app.patch('/api/user/:userId', async (req, res) => {
+  const { userId } = req.params;
+  const { field, value } = req.body;
+  const validFields = ['FullName', 'Email', 'Username', 'PhoneNumber'];
+  
+  console.log('Received PATCH request:', { userId, field, value }); // Add logging
+  
+  if (!validFields.includes(field)) {
+    console.error('Invalid field requested:', field);
+    return res.status(400).json({ error: `Invalid field: ${field}` });
+  }
+  
+  try {
+    const pool = await sql.connect(config);
+    
+    // Add parameterized query with better error handling
+    const result = await pool.request()
+      .input('UserID', sql.BigInt, userId)
+      .input('Value', sql.NVarChar(sql.MAX), value) // Use MAX for potential long values
+      .query(`UPDATE Users SET ${field} = @Value WHERE UserID = @UserID`);
+    
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    // Add detailed error logging
+    console.error('Database update error:', {
+      message: err.message,
+      code: err.code,
+      stack: err.stack
+    });
+    
+    res.status(500).json({ 
+      error: 'Update operation failed',
+      details: err.message 
+    });
+  }
+});
+app.patch('/api/user/:userId/photo', async (req, res) => {
+  const { userId } = req.params;
+  const { profilePhoto } = req.body;
+  
+  try {
+    const pool = await sql.connect(config);
+    await pool.request()
+      .input('UserID', sql.BigInt, userId)
+      .input('ProfilePhoto', sql.VarChar, profilePhoto)
+      .query('UPDATE Users SET ProfilePhoto = @ProfilePhoto WHERE UserID = @UserID');
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating profile photo:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+app.patch('/api/user/:userId/password', async (req, res) => {
+  const { userId } = req.params;
+  const { oldPassword, newPassword } = req.body;
+  
+  try {
+    const pool = await sql.connect(config);
+    
+    // Get current password
+    const userResult = await pool.request()
+      .input('UserID', sql.BigInt, userId)
+      .query('SELECT Passcode FROM Users WHERE UserID = @UserID');
+    
+    if (userResult.recordset.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const currentPassword = userResult.recordset[0].Passcode;
+    
+    // Verify old password
+    const isValid = await bcrypt.compare(oldPassword, currentPassword);
+    if (!isValid) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+    
+    // Hash new password
+    const newHash = await bcrypt.hash(newPassword, 10);
+    
+    // Update password
+    await pool.request()
+      .input('UserID', sql.Int, userId)
+      .input('NewHash', sql.VarChar, newHash)
+      .query('UPDATE Users SET Passcode = @NewHash WHERE UserID = @UserID');
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating password:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+app.patch('/api/admin/:userId/darkmode', async (req, res) => {
+  const { userId } = req.params;
+  const { darkMode } = req.body;
+  
+  try {
+    const pool = await sql.connect(config);
+    
+    // Check if admin record exists
+    const checkResult = await pool.request()
+      .input('UserID', sql.BigInt, userId)
+      .query('SELECT 1 FROM ADMIN WHERE UserID = @UserID');
+    
+    if (checkResult.recordset.length === 0) {
+      // Create admin record if doesn't exist
+      await pool.request()
+        .input('UserID', sql.Int, userId)
+        .input('DarkMode', sql.VarChar, darkMode)
+        .query('INSERT INTO ADMIN (UserID, DarkMode) VALUES (@UserID, @DarkMode)');
+    } else {
+      // Update existing record
+      await pool.request()
+        .input('UserID', sql.Int, userId)
+        .input('DarkMode', sql.VarChar, darkMode)
+        .query('UPDATE ADMIN SET DarkMode = @DarkMode WHERE UserID = @UserID');
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating dark mode:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// POST a new message to a channel
+app.post('/api/channels/:channelId/messages', async (req, res) => {
+  const channelId = parseInt(req.params.channelId, 10);
+  if (isNaN(channelId)) {
+    return res.status(400).json({ error: 'Invalid channelId' });
+  }
+  const { senderId, content } = req.body;
+  
+  if (!senderId || !content) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('ChannelID', sql.Int, channelId)
+      .input('SenderID', sql.Int, senderId)
+      .input('Content', sql.VarChar, content)
+      .query(`
+        INSERT INTO Messages (ChannelID, SenderID, Content, SentAt)
+        OUTPUT INSERTED.MessageID, INSERTED.SentAt
+        VALUES (@ChannelID, @SenderID, @Content, GETDATE())
+      `);
+    
+    if (result.recordset.length === 0) {
+      throw new Error('Failed to insert message');
+    }
+    
+    // Get sender name
+    const senderResult = await pool.request()
+      .input('UserID', sql.Int, senderId)
+      .query('SELECT FullName FROM Users WHERE UserID = @UserID');
+    
+    const newMessage = {
+      MessageID: result.recordset[0].MessageID,
+      SenderID: senderId,
+      SenderName: senderResult.recordset[0].FullName,
+      Content: content,
+      SentAt: new Date(result.recordset[0].SentAt).toISOString()
+    };
+    
+    res.status(201).json(newMessage);
+  } catch (err) {
+    console.error('Error sending message:', err);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+// Get all volunteers (community members with role "Volunteer")
+app.get('/api/volunteers', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    
+    const result = await pool.request().query(`
+      SELECT 
+        u.UserID,
+        u.FullName,
+        u.Email,
+        u.PhoneNumber,
+        (SELECT COUNT(*) FROM Report WHERE ReporterID = u.UserID) AS requests,
+        (SELECT COUNT(*) FROM Response WHERE UserID = u.UserID) AS responses,
+        CASE 
+          WHEN EXISTS (
+            SELECT 1 FROM Sleep 
+            WHERE UserID = u.UserID 
+            AND OnBreak = 'Yes' 
+            AND (Duration IS NULL OR Duration > GETDATE())
+          ) THEN 0 
+          ELSE 1 
+        END AS isActive
+      FROM Users u
+      INNER JOIN CommunityMember cm ON u.UserID = cm.UserID
+      WHERE cm.Role = 'Volunteer'
+    `);
+    
+    res.json({ volunteers: result.recordset });
+  } catch (err) {
+    console.error('Error fetching volunteers:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Put a user to sleep
+app.post('/api/sleep', async (req, res) => {
+  const { userId, durationHours } = req.body;
+  
+  if (!userId || !durationHours) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  
+  try {
+    const pool = await sql.connect(config);
+    
+    // Calculate end time
+    const durationMinutes = durationHours * 60;
+    const endTime = new Date();
+    endTime.setMinutes(endTime.getMinutes() + durationMinutes);
+    
+    await pool.request()
+      .input('UserID', sql.Int, userId)
+      .input('OnBreak', sql.VarChar, 'Yes')
+      .input('Duration', sql.DateTime, endTime)
+      .query(`
+        INSERT INTO Sleep (UserID, OnBreak, Duration)
+        VALUES (@UserID, @OnBreak, @Duration)
+      `);
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error putting user to sleep:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
