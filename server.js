@@ -2299,6 +2299,42 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
   }
 });
 
+// GET messages for a channel
+app.get('/api/channels/:channelId/messages', async (req, res) => {
+  const channelId = parseInt(req.params.channelId, 10);
+  if (isNaN(channelId)) {
+    return res.status(400).json({ error: 'Invalid channelId' });
+  }
+  
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('ChannelID', sql.Int, channelId)
+      .query(`
+        SELECT TOP 50 
+          m.MessageID, 
+          m.SenderID, 
+          u.FullName AS SenderName, 
+          m.Content, 
+          m.SentAt
+        FROM Messages m
+        JOIN Users u ON m.SenderID = u.UserID
+        WHERE m.ChannelID = @ChannelID
+        ORDER BY m.SentAt DESC
+      `);
+    
+    res.json({ 
+      messages: result.recordset.map(msg => ({
+        ...msg,
+        SentAt: new Date(msg.SentAt).toISOString()
+      }))
+    });
+  } catch (err) {
+    console.error('Error fetching messages:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get all volunteers (community members with role "Volunteer")
 app.get('/api/volunteers', async (req, res) => {
   try {
