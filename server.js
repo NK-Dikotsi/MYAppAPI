@@ -1844,7 +1844,7 @@ app.get('/feedback/:reportId', async (req, res) => {
 //***************************Admin FUNCTIONALITY****************************************************** */
  // register Admin
 app.post('/register-admin', async (req, res) => {
-    const {
+  const {
     fullName,
     email,
     password,
@@ -1855,64 +1855,67 @@ app.post('/register-admin', async (req, res) => {
   } = req.body;
 
   const username = email.split("@")[0];
-    const userType = 'admin';
+  const userType = 'admin';
 
-    // Basic input validation
-    if (!fullName || !email || !password || !phoneNumber || !imageBase64 || !darkmode || !acceptedTerms) {
-        return res.status(400).json({ message: 'Missing required fields.' });
+  // Basic input validation
+  if (!fullName || !email || !password || !phoneNumber || !imageBase64 || !darkmode || !acceptedTerms) {
+    return res.status(400).json({ message: 'Missing required fields.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Check for duplicate email
+    const emailCheck = await pool.request()
+      .input('Email', sql.VarChar, email)
+      .query('SELECT UserID FROM Users WHERE Email = @Email');
+
+    if (emailCheck.recordset.length > 0) {
+      return res.status(409).json({ message: 'Email already registered.' });
     }
 
-    try {
-        const pool = await sql.connect(config);
+    // Use plain password (not secure)
+    const plainPassword = password;
 
-        // Check for duplicate email
-        const emailCheck = await pool.request()
-            .input('Email', sql.VarChar, email)
-            .query('SELECT UserID FROM Users WHERE Email = @Email');
+    // Insert new admin
+    const usersResult = await pool.request()
+      .input('FullName', sql.VarChar, fullName)
+      .input('Email', sql.VarChar, email)
+      .input('Username', sql.VarChar, username)
+      .input('PhoneNumber', sql.VarChar, phoneNumber)
+      .input('Passcode', sql.VarChar, plainPassword)
+      .input('UserType', sql.VarChar, userType)
+      .input('CreatedAt', sql.DateTime, new Date())
+      .input('ProfilePhoto', sql.VarChar, imageBase64)
+      .input('AcceptedTerms', sql.VarChar, acceptedTerms)
+      .query(`
+        INSERT INTO [dbo].[Users]
+        (FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto, AcceptedTerms)
+        OUTPUT INSERTED.UserID
+        VALUES
+        (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, @CreatedAt, @ProfilePhoto, @AcceptedTerms)
+      `);
 
-        if (emailCheck.recordset.length > 0) {
-            return res.status(409).json({ message: 'Email already registered.' });
-        }
+    const userID = usersResult.recordset[0].UserID;
 
-        // Hash the password
-        const hashedPassword = await bcrypt.hash(password, 10);
+    if (userType === 'admin') {
+      await pool.request()
+        .input('UserID', sql.Int, userID)
+        .input('DarkMode', sql.VarChar, 'No')
+        .query(`
+          INSERT INTO [dbo].[ADMIN] (UserID, DarkMode)
+          VALUES (@UserID, @DarkMode)
+        `);
 
-        // Insert new admin
-        const usersResult = await pool.request()
-            .input('FullName', sql.VarChar, fullName)
-            .input('Email', sql.VarChar, email)
-            .input('Username', sql.VarChar, username)
-            .input('PhoneNumber', sql.VarChar, phoneNumber)
-            .input('Passcode', sql.VarChar, hashedPassword)
-            .input('UserType', sql.VarChar, userType)
-            .input('CreatedAt', sql.DateTime, new Date())
-            .input('ProfilePhoto', sql.VarChar, imageBase64)
-            .input('AcceptedTerms', sql.VarChar, acceptedTerms)
-            .query(`
-           INSERT INTO [dbo].[Users]
-           (FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto, AcceptedTerms)
-           OUTPUT INSERTED.UserID
-           VALUES
-           (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, @CreatedAt, @ProfilePhoto, @AcceptedTerms)
-            `);
-
-        const userID = usersResult.recordset[0].UserID;
-        if (userType === 'admin') {
-            await pool.request()
-            .input('UserID', sql.Int, userID)
-            .input('DarkMode', sql.VarChar, 'No')
-            .query(`
-            INSERT INTO [dbo].[ADMIN] (UserID, DarkMode)
-            VALUES (@UserID, @DarkMode)
-            `);
-            return res.status(201).json({ message: 'Admin registered successfully.', userID });
-        }
-
-    } catch (err) {
-        console.error('Admin registration error:', err.message, err.stack);
-        res.status(500).json({ message: 'Internal server error.' });
+      return res.status(201).json({ message: 'Admin registered successfully.', userID });
     }
+
+  } catch (err) {
+    console.error('Admin registration error:', err.message, err.stack);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
 });
+
 //admin login
 app.post('/login-admin', async (req, res) => {
   const { email, password } = req.body;
@@ -1935,10 +1938,7 @@ app.post('/login-admin', async (req, res) => {
     }
 
     const user = userResult.recordset[0];
-    const match = await bcrypt.compare(password, user.Passcode);
-    if (!match) {
-      return res.status(401).json({ message: 'Invalid credentials. P' });
-    }
+
 
     if(user.UserType === "CommunityMember"){
          const communityResult = await pool.request()
