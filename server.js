@@ -503,29 +503,88 @@ app.get('/report', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 });
-app.get('/getReports', async (req, res) => {
-  const userId = parseInt(req.query.userId);
-  console.log(userId);
 
-  if (!userId || isNaN(userId)) {
-    return res.status(400).json({ message: 'Missing or invalid userId.' });
+//get report
+app.get('/getReportWithReporter', async (req, res) => {
+  const { id } = req.query;
+
+  if (!id) {
+    return res.status(400).json({
+      success: false,
+      message: 'Report ID is required',
+    });
   }
 
   try {
     const pool = await sql.connect(config);
 
     const result = await pool.request()
-      .input('UserID', sql.Int, userId)
-      .query('SELECT * FROM [dbo].[Report] WHERE ReporterID = @UserID');
+      .input('ReportID', sql.Int, id)
+      .query(`
+        SELECT 
+          r.ReportID,
+          r.emergencyType,
+          r.emerDescription,
+          r.media_Photo,
+          r.media_Voice,
+          r.sharedWith,
+          r.Report_Location,
+          r.Report_Status,
+          r.ReporterID,
+
+          u.FullName,
+          u.Email,
+          u.Username,
+          u.PhoneNumber,
+          u.UserType,
+          u.ProfilePhoto
+        FROM Report r
+        INNER JOIN Users u ON r.ReporterID = u.UserID
+        WHERE r.ReportID = @ReportID
+      `);
 
     if (result.recordset.length === 0) {
-      return res.status(404).json({ message: 'No reports found for this user.' });
+      return res.status(404).json({
+        success: false,
+        message: 'No report found for the given ID',
+      });
     }
 
-    res.status(200).json({ success: true, reports: result.recordset });
-  } catch (err) {
-    console.error('Error fetching reports by userId:', err);
-    res.status(500).json({ success: false, message: 'Internal server error.' });
+    const row = result.recordset[0];
+
+    const response = {
+      Report: {
+        ReportID: row.ReportID,
+        EmergencyType: row.emergencyType,
+        EmerDescription: row.emerDescription,
+        MediaPhoto: row.media_Photo,
+        MediaVoice: row.media_Voice,
+        SharedWith: row.sharedWith,
+        Report_Location: row.Report_Location,
+        Report_Status: row.Report_Status,
+        ReporterID: row.ReporterID,
+      },
+      Reporter: {
+        FullName: row.FullName,
+        Email: row.Email,
+        Username: row.Username,
+        PhoneNumber: row.PhoneNumber,
+        UserType: row.UserType,
+        ProfilePhoto: row.ProfilePhoto,
+      }
+    };
+
+    res.status(200).json({
+      success: true,
+      data: response,
+    });
+
+  } catch (error) {
+    console.error("Error fetching report and reporter:", error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
   }
 });
 
@@ -658,7 +717,7 @@ app.post('/addMessage', async (req, res) => {
     console.error('SQL error', err);
     res.status(500).json({ error: 'Database error' });
   }
-});
+});  
 
 app.get('/getMessages', async (req, res) => {
   const { reportID } = req.query;  // get from query string
@@ -2276,5 +2335,138 @@ app.post('/api/sleep', async (req, res) => {
   } catch (err) {
     console.error('Error putting user to sleep:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+//get report
+app.get('/getReportWithReporter', async (req, res) => {
+  const { id } = req.query;
+
+  if (!id) {
+    return res.status(400).json({
+      success: false,
+      message: 'Report ID is required',
+    });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('ReportID', sql.Int, id)
+      .query(`
+        SELECT 
+          r.ReportID,
+          r.emergencyType,
+          r.emerDescription,
+          r.media_Photo,
+          r.media_Voice,
+          r.sharedWith,
+          r.Report_Location,
+          r.Report_Status,
+          r.ReporterID,
+
+          u.FullName,
+          u.Email,
+          u.Username,
+          u.PhoneNumber,
+          u.UserType,
+          u.ProfilePhoto
+        FROM Report r
+        INNER JOIN Users u ON r.ReporterID = u.UserID
+        WHERE r.ReportID = @ReportID
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No report found for the given ID',
+      });
+    }
+
+    const row = result.recordset[0];
+
+    const response = {
+      Report: {
+        ReportID: row.ReportID,
+        EmergencyType: row.emergencyType,
+        EmerDescription: row.emerDescription,
+        MediaPhoto: row.media_Photo,
+        MediaVoice: row.media_Voice,
+        SharedWith: row.sharedWith,
+        Report_Location: row.Report_Location,
+        Report_Status: row.Report_Status,
+        ReporterID: row.ReporterID,
+      },
+      Reporter: {
+        FullName: row.FullName,
+        Email: row.Email,
+        Username: row.Username,
+        PhoneNumber: row.PhoneNumber,
+        UserType: row.UserType,
+        ProfilePhoto: row.ProfilePhoto,
+      }
+    };
+
+    res.status(200).json({
+      success: true,
+      data: response,
+    });
+
+  } catch (error) {
+    console.error("Error fetching report and reporter:", error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
+  }
+});
+
+//Get comunity memebers
+app.get('/getCommunityMembers', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request().query(`
+      SELECT 
+        u.UserID,
+        u.FullName,
+        u.Email,
+        u.Username,
+        u.PhoneNumber,
+        u.UserType,
+        u.CreatedAt,
+        cm.Role,
+        cm.DOB,
+        cm.HomeAddress
+      FROM Users u
+      INNER JOIN CommunityMember cm ON u.UserID = cm.UserID
+    `);
+
+    const members = result.recordset;
+    const count = members.length;
+
+    if (count === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No community members found.',
+        count: 0,
+        CommunityMembers: [],
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `${count} community member(s) found.`,
+      count,
+      CommunityMembers: members,
+    });
+
+  } catch (err) {
+    console.error('Error fetching community members:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error.',
+    });
   }
 });
