@@ -2606,3 +2606,45 @@ app.get('/community/count', async (req, res) => {
         });
     }
 });
+
+app.get('/getReports-admin', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request().query(`
+      SELECT 
+        ReportID,
+        EmergencyType,
+        EmerDescription,
+        Report_Location,
+        Report_Status
+      FROM Report
+    `);
+
+    const reports = result.recordset;
+    const count = reports.length;
+
+    if (count === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No reports found.',
+        count: 0,
+        Reports: [],
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `${count} report(s) found.`,
+      count,
+      Reports: reports,
+    });
+  } catch (error) {
+    console.error('SQL error', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch reports',
+      error: error.message,
+    });
+  }
+});
