@@ -2607,7 +2607,7 @@ app.get('/community/count', async (req, res) => {
     }
 });
 
-app.get('/getReports-admin', async (req, res) => {
+app.get('/getReportsadmin', async (req, res) => {
   try {
     const pool = await sql.connect(config);
 
