@@ -2533,3 +2533,76 @@ app.get('/getCommunityMembers', async (req, res) => {
     });
   }
 });
+
+
+app.get('/reports/count', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .query(`SELECT COUNT(*) AS ReportCount FROM [dbo].[Report]`);
+
+    const count = result.recordset[0].ReportCount;
+
+    res.status(200).json({
+      success: true,
+      message: 'Report count retrieved successfully.',
+      count: count
+    });
+
+  } catch (err) {
+    console.error('Error counting reports:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error.'
+    });
+  }
+});
+
+app.get('/reports/count/completed', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .query(`SELECT COUNT(*) AS CompletedCount FROM [dbo].[Report] WHERE Report_Status = 'Completed'`);
+
+    const count = result.recordset[0].CompletedCount;
+
+    res.status(200).json({
+      success: true,
+      message: 'Completed report count retrieved successfully.',
+      count: count
+    });
+
+  } catch (err) {
+    console.error('Error counting completed reports:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error.'
+    });
+  }
+});
+
+app.get('/community/count', async (req, res) => {
+    try {
+        const pool = await sql.connect(config);
+
+        const result = await pool.request()
+            .query(`SELECT COUNT(*) AS MemberCount FROM [dbo].[CommunityMember]`);
+
+        const count = result.recordset[0].MemberCount;
+
+        res.status(200).json({
+            success: true,
+            message: 'Community member count retrieved successfully.',
+            count: count
+        });
+
+    } catch (err) {
+        console.error('Error counting community members:', err);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error.'
+        });
+    }
+});
