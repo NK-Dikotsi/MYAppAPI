@@ -1152,6 +1152,7 @@ app.get('/currentReports', async (req, res) => {
 });
 
 
+
 // Basic Test Endpoint
 app.get('/', (req, res) => {
   res.json("Hi, I am the backend.");
@@ -1769,6 +1770,7 @@ app.get('/trusted-contacts', requireAuth, async (req, res) => {
     });
   }
 });
+
 app.put('/reports/complete', async (req, res) => {
   const { reportId, reason } = req.body;
   console.log('Received Data', req.body);
@@ -1819,6 +1821,42 @@ app.put('/reports/complete', async (req, res) => {
         error: err.message,
       });
     }
+  }
+});
+
+app.put('/response/cancel', async (req, res) => {
+  const { reportId, userId } = req.body;
+
+  if (!reportId || !userId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing reportId or userId in request body',
+    });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    await pool.request()
+      .input('reportId', sql.Int, reportId)
+      .input('userId', sql.Int, userId)
+      .query(`
+        UPDATE Response
+        SET res_Status = 'Cancelled'
+        WHERE reportID = @reportId AND UserID = @userId
+      `);
+
+    res.status(200).json({
+      success: true,
+      message: `Response status set to 'Cancelled' for reportID ${reportId} and userID ${userId}.`,
+    });
+  } catch (err) {
+    console.error('Error cancelling response:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to cancel response',
+      error: err.message,
+    });
   }
 });
 
