@@ -860,6 +860,39 @@ app.post('/api/messages', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/messages/image', async (req, res) => {
+  const messageId = parseInt(req.query.messageid);
+
+  if (isNaN(messageId)) {
+    return res.status(400).json({ success: false, message: 'Invalid or missing messageid query parameter' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .query(`
+        SELECT images64 FROM Messages WHERE MessageID = @MessageID
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ success: false, message: 'Message not found' });
+    }
+
+    const rawImage = result.recordset[0].images64;
+
+    res.status(200).json({
+      success: true,
+      image: rawImage && rawImage.trim() !== '' ? rawImage : null
+    });
+
+  } catch (err) {
+    console.error('Error fetching image:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch image' });
+  }
+});
+
 // GET /api/messages
 app.get('/api/messages', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
