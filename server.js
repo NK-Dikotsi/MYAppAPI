@@ -813,19 +813,23 @@ app.get('/api/current-user', requireAuth, (req, res) => {
   });
 });
 
+// POST /api/messages - For sending messages with images
 app.post('/api/messages', requireAuth, async (req, res) => {
   const { content, images64 } = req.body;
-  const channelId = 1; // Melville Emergency Channel
-  const senderId = req.session.user.id; // Get from session
+  const channelId = 1;
+  const senderId = req.session.user.id;
 
   try {
     const pool = await sql.connect(config);
+
+    // Convert images array to semicolon-separated string
+    const imagesString = Array.isArray(images64) ? images64.join(';') : '';
 
     const result = await pool.request()
       .input('ChannelID', sql.Int, channelId)
       .input('SenderID', sql.Int, senderId)
       .input('Content', sql.NVarChar(sql.MAX), content)
-      .input('Images64', sql.NVarChar(sql.MAX), images64 || null)
+      .input('Images64', sql.NVarChar(sql.MAX), imagesString)
       .query(`
         INSERT INTO Messages (ChannelID, SenderID, Content, images64)
         OUTPUT INSERTED.MessageID, INSERTED.SentAt
@@ -844,7 +848,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
         senderId,
         senderName: senderInfo.recordset[0]?.FullName || 'Unknown',
         content,
-        images64,
+        images64: Array.isArray(images64) ? images64 : [],
         sentAt: result.recordset[0].SentAt,
         isCurrentUser: true
       }
@@ -990,12 +994,11 @@ app.post('/api/messages/read', requireAuth, async (req, res) => {
 // GET /api/messages/unread-count
 app.get('/api/messages', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
-  const channelId = 1; // Melville Emergency Channel
+  const channelId = 1;
 
   try {
     const pool = await sql.connect(config);
 
-    // First get all messages
     const result = await pool.request()
       .input('ChannelID', sql.Int, channelId)
       .input('UserID', sql.Int, userId)
@@ -1016,12 +1019,9 @@ app.get('/api/messages', requireAuth, async (req, res) => {
         ORDER BY m.SentAt ASC
       `);
 
-    // Identify unread messages not sent by current user
-    const unreadMessages = result.recordset.filter(msg =>
-      !msg.isRead && !msg.isCurrentUser
-    );
+    // Process messages and mark unread ones as read
+    const unreadMessages = result.recordset.filter(msg => !msg.isRead && !msg.isCurrentUser);
 
-    // Mark them as read
     if (unreadMessages.length > 0) {
       await Promise.all(
         unreadMessages.map(msg =>
@@ -1040,19 +1040,12 @@ app.get('/api/messages', requireAuth, async (req, res) => {
             `)
         )
       );
-
-      // Update the isRead status in the response
-      result.recordset.forEach(msg => {
-        if (unreadMessages.some(m => m.id === msg.id)) {
-          msg.isRead = true;
-        }
-      });
     }
 
-    // Format the response with images64 as array
+    // Format response with proper images array
     const formattedMessages = result.recordset.map(msg => ({
       ...msg,
-      images64: msg.images64 ? msg.images64.split(';').filter(Boolean) : []
+      images64: msg.images64 ? msg.images64.split(';').filter(img => img) : []
     }));
 
     res.status(200).json({
@@ -1102,9 +1095,10 @@ app.post('/api/notifications', async (req, res) => {
 });
 
 
+
 app.get('/api/messages/latest', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
-  const lastMessageId = req.query.lastMessageId || 0;
+  const lastMessageId = parseInt(req.query.lastMessageId) || 0;
   const channelId = 1;
 
   try {
@@ -1131,10 +1125,8 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
         ORDER BY m.SentAt ASC
       `);
 
-    // Mark unread messages as read
-    const unreadMessages = result.recordset.filter(msg =>
-      !msg.isRead && !msg.isCurrentUser
-    );
+    // Process messages and mark unread ones as read
+    const unreadMessages = result.recordset.filter(msg => !msg.isRead && !msg.isCurrentUser);
 
     if (unreadMessages.length > 0) {
       await Promise.all(
@@ -1156,26 +1148,11 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
       );
     }
 
-    // Process images64 properly
-    const formattedMessages = result.recordset.map(msg => {
-      let imagesArray = [];
-      
-      if (msg.images64) {
-        try {
-          // Split by semicolon and filter out empty strings
-          imagesArray = msg.images64.split(';')
-            .filter(img => img && img.trim().length > 0)
-            .map(img => img.trim());
-        } catch (error) {
-          console.error('Error processing images64:', error);
-        }
-      }
-
-      return {
-        ...msg,
-        images64: imagesArray
-      };
-    });
+    // Format response with proper images array
+    const formattedMessages = result.recordset.map(msg => ({
+      ...msg,
+      images64: msg.images64 ? msg.images64.split(';').filter(img => img) : []
+    }));
 
     res.status(200).json({
       success: true,
@@ -1184,14 +1161,9 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
 
   } catch (err) {
     console.error('Error fetching latest messages:', err);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch messages',
-      error: err.message 
-    });
+    res.status(500).json({ success: false, message: 'Failed to fetch messages' });
   }
 });
-
 
 app.get('/currentReports', async (req, res) => {
   const { userId } = req.query;
