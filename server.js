@@ -1141,7 +1141,7 @@ app.get('/currentReports', async (req, res) => {
       SELECT r.* 
       FROM Response resp
       JOIN Report r ON r.ReportID = resp.reportID
-      WHERE resp.UserID = @userId AND r.Report_Status='On-going'
+      WHERE resp.UserID = @userId AND r.Report_Status='On-going' AND resp.res_Status='en-route'
     `);
 
     res.json({ reports: result.recordset });
