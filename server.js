@@ -744,7 +744,7 @@ app.post('/addMessage', async (req, res) => {
     console.error('SQL error', err);
     res.status(500).json({ error: 'Database error' });
   }
-});  
+});
 
 app.get('/getMessages', async (req, res) => {
   const { reportID } = req.query;  // get from query string
@@ -1770,8 +1770,8 @@ app.get('/trusted-contacts', requireAuth, async (req, res) => {
   }
 });
 app.put('/reports/complete', async (req, res) => {
-  const { reportId,reason } = req.body;
-  console.log('recieved Data',req.body);
+  const { reportId, reason } = req.body;
+  console.log('recieved Data', req.body);
 
   if (!reportId) {
     return res.status(400).json({
@@ -1787,7 +1787,7 @@ app.put('/reports/complete', async (req, res) => {
       .input('reportId', sql.Int, reportId)
       .query(`
         UPDATE Report
-        SET Report_Status = 'Completed'
+        SET Report_Status = '${reason}'
         WHERE ReportID = @reportId
       `);
 
@@ -1938,7 +1938,7 @@ app.get('/feedback/:reportId', async (req, res) => {
 
 
 //***************************Admin FUNCTIONALITY****************************************************** */
- // register Admin
+// register Admin
 app.post('/register-admin', async (req, res) => {
   const {
     fullName,
@@ -2036,67 +2036,67 @@ app.post('/login-admin', async (req, res) => {
     const user = userResult.recordset[0];
 
 
-    if(user.UserType === "CommunityMember"){
-         const communityResult = await pool.request()
-            .input('UserID', sql.Int, user.UserID)
-            .query(`
+    if (user.UserType === "CommunityMember") {
+      const communityResult = await pool.request()
+        .input('UserID', sql.Int, user.UserID)
+        .query(`
                 SELECT Role, DOB, HomeAddress, TrustedContacts
                 FROM [dbo].[CommunityMember]
                 WHERE UserID = @UserID
             `);
-        
-         const role = communityResult.recordset.length > 0 
-            ? communityResult.recordset[0].Role
-            : 'Volunteer';
 
-        const  communitym = communityResult.recordset[0];
+      const role = communityResult.recordset.length > 0
+        ? communityResult.recordset[0].Role
+        : 'Volunteer';
 
-        // Return properly structured response
-        res.json({
+      const communitym = communityResult.recordset[0];
+
+      // Return properly structured response
+      res.json({
         success: true,
         user: {
-            UserID: user.UserID,
-            FullName: user.FullName,
-            Email: user.Email,
-            Username: user.Username,
-            PhoneNumber: user.PhoneNumber,
-            UserType: user.UserType,
-            CreatedAt: user.CreatedAt,
-            ProfilePhoto: user.ProfilePhoto, // Fixed typo (was 'profile')
-            Role: role,
-            DOB: communitym.DOB,
-            HomeAddress: communitym.HomeAddress, 
-            TrustedContacts: communitym.TrustedContacts,
+          UserID: user.UserID,
+          FullName: user.FullName,
+          Email: user.Email,
+          Username: user.Username,
+          PhoneNumber: user.PhoneNumber,
+          UserType: user.UserType,
+          CreatedAt: user.CreatedAt,
+          ProfilePhoto: user.ProfilePhoto, // Fixed typo (was 'profile')
+          Role: role,
+          DOB: communitym.DOB,
+          HomeAddress: communitym.HomeAddress,
+          TrustedContacts: communitym.TrustedContacts,
         }
-        });
-    }else{
-        const adminResult = await pool.request()
-            .input('UserID', sql.Int, user.UserID)
-            .query(`
+      });
+    } else {
+      const adminResult = await pool.request()
+        .input('UserID', sql.Int, user.UserID)
+        .query(`
                 SELECT DarkMode
                 FROM [dbo].[ADMIN]
                 WHERE UserID = @UserID
             `);
 
-        const darkMode = adminResult.recordset.length > 0 
-            ? adminResult.recordset[0].DarkMode
-            : 'No';
+      const darkMode = adminResult.recordset.length > 0
+        ? adminResult.recordset[0].DarkMode
+        : 'No';
 
-        // Return properly structured response
-        res.json({
+      // Return properly structured response
+      res.json({
         success: true,
         user: {
-            UserID: user.UserID,
-            FullName: user.FullName,
-            Email: user.Email,
-            Username: user.Username,
-            PhoneNumber: user.PhoneNumber,
-            UserType: user.UserType,
-            CreatedAt: user.CreatedAt,
-            ProfilePhoto: user.ProfilePhoto, // Fixed typo (was 'profile')
-            DarkMode: darkMode
+          UserID: user.UserID,
+          FullName: user.FullName,
+          Email: user.Email,
+          Username: user.Username,
+          PhoneNumber: user.PhoneNumber,
+          UserType: user.UserType,
+          CreatedAt: user.CreatedAt,
+          ProfilePhoto: user.ProfilePhoto, // Fixed typo (was 'profile')
+          DarkMode: darkMode
         }
-        });
+      });
     }
   } catch (err) {
     console.error('Admin login error:', err);
@@ -2106,7 +2106,7 @@ app.post('/login-admin', async (req, res) => {
 // Get user data
 app.get('/api/user/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId); // Convert to integer
-  
+
   // Validate user ID
   if (isNaN(userId) || userId <= 0) {
     return res.status(400).json({ error: 'Invalid user ID' });
@@ -2122,11 +2122,11 @@ app.get('/api/user/:userId', async (req, res) => {
         LEFT JOIN ADMIN a ON u.UserID = a.UserID
         WHERE u.UserID = @UserID
       `);
-    
+
     if (result.recordset.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     res.json(result.recordset[0]);
   } catch (err) {
     console.error('Error fetching user:', err);
@@ -2137,27 +2137,27 @@ app.patch('/api/user/:userId', async (req, res) => {
   const { userId } = req.params;
   const { field, value } = req.body;
   const validFields = ['FullName', 'Email', 'Username', 'PhoneNumber'];
-  
+
   console.log('Received PATCH request:', { userId, field, value }); // Add logging
-  
+
   if (!validFields.includes(field)) {
     console.error('Invalid field requested:', field);
     return res.status(400).json({ error: `Invalid field: ${field}` });
   }
-  
+
   try {
     const pool = await sql.connect(config);
-    
+
     // Add parameterized query with better error handling
     const result = await pool.request()
       .input('UserID', sql.BigInt, userId)
       .input('Value', sql.NVarChar(sql.MAX), value) // Use MAX for potential long values
       .query(`UPDATE Users SET ${field} = @Value WHERE UserID = @UserID`);
-    
+
     if (result.rowsAffected[0] === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     res.json({ success: true });
   } catch (err) {
     // Add detailed error logging
@@ -2166,24 +2166,24 @@ app.patch('/api/user/:userId', async (req, res) => {
       code: err.code,
       stack: err.stack
     });
-    
-    res.status(500).json({ 
+
+    res.status(500).json({
       error: 'Update operation failed',
-      details: err.message 
+      details: err.message
     });
   }
 });
 app.patch('/api/user/:userId/photo', async (req, res) => {
   const { userId } = req.params;
   const { profilePhoto } = req.body;
-  
+
   try {
     const pool = await sql.connect(config);
     await pool.request()
       .input('UserID', sql.BigInt, userId)
       .input('ProfilePhoto', sql.VarChar, profilePhoto)
       .query('UPDATE Users SET ProfilePhoto = @ProfilePhoto WHERE UserID = @UserID');
-    
+
     res.json({ success: true });
   } catch (err) {
     console.error('Error updating profile photo:', err);
@@ -2193,36 +2193,36 @@ app.patch('/api/user/:userId/photo', async (req, res) => {
 app.patch('/api/user/:userId/password', async (req, res) => {
   const { userId } = req.params;
   const { oldPassword, newPassword } = req.body;
-  
+
   try {
     const pool = await sql.connect(config);
-    
+
     // Get current password
     const userResult = await pool.request()
       .input('UserID', sql.BigInt, userId)
       .query('SELECT Passcode FROM Users WHERE UserID = @UserID');
-    
+
     if (userResult.recordset.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     const currentPassword = userResult.recordset[0].Passcode;
-    
+
     // Verify old password
     const isValid = await bcrypt.compare(oldPassword, currentPassword);
     if (!isValid) {
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
-    
+
     // Hash new password
     const newHash = await bcrypt.hash(newPassword, 10);
-    
+
     // Update password
     await pool.request()
       .input('UserID', sql.Int, userId)
       .input('NewHash', sql.VarChar, newHash)
       .query('UPDATE Users SET Passcode = @NewHash WHERE UserID = @UserID');
-    
+
     res.json({ success: true });
   } catch (err) {
     console.error('Error updating password:', err);
@@ -2232,15 +2232,15 @@ app.patch('/api/user/:userId/password', async (req, res) => {
 app.patch('/api/admin/:userId/darkmode', async (req, res) => {
   const { userId } = req.params;
   const { darkMode } = req.body;
-  
+
   try {
     const pool = await sql.connect(config);
-    
+
     // Check if admin record exists
     const checkResult = await pool.request()
       .input('UserID', sql.BigInt, userId)
       .query('SELECT 1 FROM ADMIN WHERE UserID = @UserID');
-    
+
     if (checkResult.recordset.length === 0) {
       // Create admin record if doesn't exist
       await pool.request()
@@ -2254,7 +2254,7 @@ app.patch('/api/admin/:userId/darkmode', async (req, res) => {
         .input('DarkMode', sql.VarChar, darkMode)
         .query('UPDATE ADMIN SET DarkMode = @DarkMode WHERE UserID = @UserID');
     }
-    
+
     res.json({ success: true });
   } catch (err) {
     console.error('Error updating dark mode:', err);
@@ -2268,11 +2268,11 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
     return res.status(400).json({ error: 'Invalid channelId' });
   }
   const { senderId, content } = req.body;
-  
+
   if (!senderId || !content) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
-  
+
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -2284,16 +2284,16 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
         OUTPUT INSERTED.MessageID, INSERTED.SentAt
         VALUES (@ChannelID, @SenderID, @Content, GETDATE())
       `);
-    
+
     if (result.recordset.length === 0) {
       throw new Error('Failed to insert message');
     }
-    
+
     // Get sender name
     const senderResult = await pool.request()
       .input('UserID', sql.Int, senderId)
       .query('SELECT FullName FROM Users WHERE UserID = @UserID');
-    
+
     const newMessage = {
       MessageID: result.recordset[0].MessageID,
       SenderID: senderId,
@@ -2301,7 +2301,7 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
       Content: content,
       SentAt: new Date(result.recordset[0].SentAt).toISOString()
     };
-    
+
     res.status(201).json(newMessage);
   } catch (err) {
     console.error('Error sending message:', err);
@@ -2315,7 +2315,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
   if (isNaN(channelId)) {
     return res.status(400).json({ error: 'Invalid channelId' });
   }
-  
+
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -2332,8 +2332,8 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
         WHERE m.ChannelID = @ChannelID
         ORDER BY m.SentAt DESC
       `);
-    
-    res.json({ 
+
+    res.json({
       messages: result.recordset.map(msg => ({
         ...msg,
         SentAt: new Date(msg.SentAt).toISOString()
@@ -2349,7 +2349,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
 app.get('/api/volunteers', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     const result = await pool.request().query(`
       SELECT 
         u.UserID,
@@ -2371,7 +2371,7 @@ app.get('/api/volunteers', async (req, res) => {
       INNER JOIN CommunityMember cm ON u.UserID = cm.UserID
       WHERE cm.Role = 'Volunteer'
     `);
-    
+
     res.json({ volunteers: result.recordset });
   } catch (err) {
     console.error('Error fetching volunteers:', err);
@@ -2382,19 +2382,19 @@ app.get('/api/volunteers', async (req, res) => {
 // Put a user to sleep
 app.post('/api/sleep', async (req, res) => {
   const { userId, durationHours } = req.body;
-  
+
   if (!userId || !durationHours) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
-  
+
   try {
     const pool = await sql.connect(config);
-    
+
     // Calculate end time
     const durationMinutes = durationHours * 60;
     const endTime = new Date();
     endTime.setMinutes(endTime.getMinutes() + durationMinutes);
-    
+
     await pool.request()
       .input('UserID', sql.Int, userId)
       .input('OnBreak', sql.VarChar, 'Yes')
@@ -2403,7 +2403,7 @@ app.post('/api/sleep', async (req, res) => {
         INSERT INTO Sleep (UserID, OnBreak, Duration)
         VALUES (@UserID, @OnBreak, @Duration)
       `);
-    
+
     res.json({ success: true });
   } catch (err) {
     console.error('Error putting user to sleep:', err);
@@ -2594,27 +2594,27 @@ app.get('/reports/count/completed', async (req, res) => {
 });
 
 app.get('/community/count', async (req, res) => {
-    try {
-        const pool = await sql.connect(config);
+  try {
+    const pool = await sql.connect(config);
 
-        const result = await pool.request()
-            .query(`SELECT COUNT(*) AS MemberCount FROM [dbo].[CommunityMember]`);
+    const result = await pool.request()
+      .query(`SELECT COUNT(*) AS MemberCount FROM [dbo].[CommunityMember]`);
 
-        const count = result.recordset[0].MemberCount;
+    const count = result.recordset[0].MemberCount;
 
-        res.status(200).json({
-            success: true,
-            message: 'Community member count retrieved successfully.',
-            count: count
-        });
+    res.status(200).json({
+      success: true,
+      message: 'Community member count retrieved successfully.',
+      count: count
+    });
 
-    } catch (err) {
-        console.error('Error counting community members:', err);
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error.'
-        });
-    }
+  } catch (err) {
+    console.error('Error counting community members:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error.'
+    });
+  }
 });
 
 app.get('/getReportsadmin', async (req, res) => {
