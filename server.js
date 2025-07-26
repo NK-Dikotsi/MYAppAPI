@@ -1159,7 +1159,7 @@ app.get('/', (req, res) => {
 
 // Start Server
 app.listen(3000, () => {
-  console.log("Server started on port 3000");
+  console.log("Server started ");
 });
 
 // Test Admin and CommunityMember Registration
@@ -1926,6 +1926,15 @@ app.get('/feedback/:reportId', async (req, res) => {
     });
   }
 });
+
+
+
+
+
+
+
+
+
 
 
 //***************************Admin FUNCTIONALITY****************************************************** */
