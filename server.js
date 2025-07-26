@@ -282,7 +282,7 @@ app.post('/addReport', async (req, res) => {
                 (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status)
                 OUTPUT INSERTED.ReportID
                 VALUES
-                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus)
+                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus,GETDATE())
             `);
 
     const insertedReportID = result.recordset[0].ReportID;
