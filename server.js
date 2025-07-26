@@ -338,7 +338,7 @@ app.post('/addTrustedContact', async (req, res) => {
 
 app.post('/addNotification', async (req, res) => {
   const { userIds, notiTitle, msg, readStatus, reportid, reporterID } = req.body;
-  console.log('Received user data: ', req.body);
+  //console.log('Received user data: ', req.body);
 
   const tokens = userIds.split(' ');
   const insertedNotificationIDs = [];
@@ -814,7 +814,7 @@ app.get('/api/current-user', requireAuth, (req, res) => {
 });
 
 app.post('/api/messages', requireAuth, async (req, res) => {
-  const { content } = req.body;
+  const { content, images64 } = req.body;
   const channelId = 1; // Melville Emergency Channel
   const senderId = req.session.user.id; // Get from session
 
@@ -825,11 +825,12 @@ app.post('/api/messages', requireAuth, async (req, res) => {
       .input('ChannelID', sql.Int, channelId)
       .input('SenderID', sql.Int, senderId)
       .input('Content', sql.NVarChar(sql.MAX), content)
+      .input('Images64', sql.NVarChar(sql.MAX), images64 || null)
       .query(`
-                INSERT INTO Messages (ChannelID, SenderID, Content)
-                OUTPUT INSERTED.MessageID, INSERTED.SentAt
-                VALUES (@ChannelID, @SenderID, @Content)
-            `);
+        INSERT INTO Messages (ChannelID, SenderID, Content, images64)
+        OUTPUT INSERTED.MessageID, INSERTED.SentAt
+        VALUES (@ChannelID, @SenderID, @Content, @Images64)
+      `);
 
     // Get sender info
     const senderInfo = await pool.request()
@@ -843,6 +844,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
         senderId,
         senderName: senderInfo.recordset[0]?.FullName || 'Unknown',
         content,
+        images64,
         sentAt: result.recordset[0].SentAt,
         isCurrentUser: true
       }
@@ -853,7 +855,6 @@ app.post('/api/messages', requireAuth, async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to send message' });
   }
 });
-
 
 // GET /api/messages
 app.get('/api/messages', requireAuth, async (req, res) => {
@@ -987,37 +988,81 @@ app.post('/api/messages/read', requireAuth, async (req, res) => {
 
 
 // GET /api/messages/unread-count
-app.get('/api/messages/unread-count', requireAuth, async (req, res) => {
+app.get('/api/messages', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
   const channelId = 1; // Melville Emergency Channel
 
   try {
     const pool = await sql.connect(config);
 
+    // First get all messages
     const result = await pool.request()
-      .input('UserID', sql.Int, userId)
       .input('ChannelID', sql.Int, channelId)
+      .input('UserID', sql.Int, userId)
       .query(`
-                SELECT COUNT(*) as count
-                FROM Messages m
-                LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
-                WHERE m.ChannelID = @ChannelID
-                AND m.SenderID != @UserID  -- Only count messages from others
-                AND r.MessageID IS NULL    -- Only count unread messages
-            `);
+        SELECT 
+          m.MessageID as id,
+          m.SenderID as senderId,
+          u.FullName as senderName,
+          m.Content as text,
+          m.images64,
+          m.SentAt as time,
+          CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
+          CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
+        FROM Messages m
+        JOIN Users u ON m.SenderID = u.UserID
+        LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+        WHERE m.ChannelID = @ChannelID
+        ORDER BY m.SentAt ASC
+      `);
+
+    // Identify unread messages not sent by current user
+    const unreadMessages = result.recordset.filter(msg =>
+      !msg.isRead && !msg.isCurrentUser
+    );
+
+    // Mark them as read
+    if (unreadMessages.length > 0) {
+      await Promise.all(
+        unreadMessages.map(msg =>
+          pool.request()
+            .input('MessageID', sql.Int, msg.id)
+            .input('UserID', sql.Int, userId)
+            .query(`
+              IF NOT EXISTS (
+                SELECT 1 FROM MessageReadStatus 
+                WHERE MessageID = @MessageID AND UserID = @UserID
+              )
+              BEGIN
+                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                VALUES (@MessageID, @UserID, GETDATE())
+              END
+            `)
+        )
+      );
+
+      // Update the isRead status in the response
+      result.recordset.forEach(msg => {
+        if (unreadMessages.some(m => m.id === msg.id)) {
+          msg.isRead = true;
+        }
+      });
+    }
+
+    // Format the response with images64 as array
+    const formattedMessages = result.recordset.map(msg => ({
+      ...msg,
+      images64: msg.images64 ? msg.images64.split(';').filter(Boolean) : []
+    }));
 
     res.status(200).json({
       success: true,
-      count: result.recordset[0].count
+      messages: formattedMessages
     });
 
   } catch (err) {
-    console.error('Error counting unread messages:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to count unread messages',
-      error: err.message
-    });
+    console.error('Error fetching messages:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch messages' });
   }
 });
 
@@ -1061,7 +1106,7 @@ app.post('/api/notifications', async (req, res) => {
 app.get('/api/messages/latest', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
   const lastMessageId = req.query.lastMessageId || 0;
-  const channelId = 1; // Add channel ID
+  const channelId = 1; // Melville Emergency Channel
 
   try {
     const pool = await sql.connect(config);
@@ -1071,20 +1116,21 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
       .input('LastMessageID', sql.Int, lastMessageId)
       .input('ChannelID', sql.Int, channelId)
       .query(`
-                SELECT 
-                    m.MessageID as id,
-                    m.SenderID as senderId,
-                    u.FullName as senderName,
-                    m.Content as text,
-                    m.SentAt as time,
-                    CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
-                    CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
-                FROM Messages m
-                JOIN Users u ON m.SenderID = u.UserID
-                LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
-                WHERE m.MessageID > @LastMessageID AND m.ChannelID = @ChannelID
-                ORDER BY m.SentAt ASC
-            `);
+        SELECT 
+          m.MessageID as id,
+          m.SenderID as senderId,
+          u.FullName as senderName,
+          m.Content as text,
+          m.images64,
+          m.SentAt as time,
+          CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
+          CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
+        FROM Messages m
+        JOIN Users u ON m.SenderID = u.UserID
+        LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+        WHERE m.MessageID > @LastMessageID AND m.ChannelID = @ChannelID
+        ORDER BY m.SentAt ASC
+      `);
 
     // Mark unread messages as read
     const unreadMessages = result.recordset.filter(msg =>
@@ -1098,15 +1144,15 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
             .input('MessageID', sql.Int, msg.id)
             .input('UserID', sql.Int, userId)
             .query(`
-                            IF NOT EXISTS (
-                                SELECT 1 FROM MessageReadStatus 
-                                WHERE MessageID = @MessageID AND UserID = @UserID
-                            )
-                            BEGIN
-                                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
-                                VALUES (@MessageID, @UserID, GETDATE())
-                            END
-                        `)
+              IF NOT EXISTS (
+                SELECT 1 FROM MessageReadStatus 
+                WHERE MessageID = @MessageID AND UserID = @UserID
+              )
+              BEGIN
+                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                VALUES (@MessageID, @UserID, GETDATE())
+              END
+            `)
         )
       );
 
@@ -1118,9 +1164,15 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
       });
     }
 
+    // Format the response with images64 as array
+    const formattedMessages = result.recordset.map(msg => ({
+      ...msg,
+      images64: msg.images64 ? msg.images64.split(';').filter(Boolean) : []
+    }));
+
     res.status(200).json({
       success: true,
-      messages: result.recordset
+      messages: formattedMessages
     });
 
   } catch (err) {
@@ -1128,6 +1180,7 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to fetch messages' });
   }
 });
+
 app.get('/currentReports', async (req, res) => {
   const { userId } = req.query;
 
