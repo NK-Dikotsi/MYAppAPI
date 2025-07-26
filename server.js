@@ -279,7 +279,7 @@ app.post('/addReport', async (req, res) => {
       .input('ReportStatus', sql.VarChar, reportStatus)
       .query(`
                 INSERT INTO [dbo].[Report]
-                (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status)
+                (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status, dateReported)
                 OUTPUT INSERTED.ReportID
                 VALUES
                 (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus,GETDATE())
