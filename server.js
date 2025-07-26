@@ -1771,7 +1771,7 @@ app.get('/trusted-contacts', requireAuth, async (req, res) => {
 });
 app.put('/reports/complete', async (req, res) => {
   const { reportId, reason } = req.body;
-  console.log('recieved Data', req.body);
+  console.log('Received Data', req.body);
 
   if (!reportId) {
     return res.status(400).json({
@@ -1783,43 +1783,42 @@ app.put('/reports/complete', async (req, res) => {
   try {
     const pool = await sql.connect(config);
 
+    // Update Report table
     await pool.request()
       .input('reportId', sql.Int, reportId)
+      .input('reason', sql.VarChar, reason)
       .query(`
         UPDATE Report
-        SET Report_Status = '${reason}'
+        SET Report_Status = @reason
         WHERE ReportID = @reportId
       `);
 
+    // Update Response table
+    await pool.request()
+      .input('reportId', sql.Int, reportId)
+      .input('reason', sql.VarChar, reason)
+      .query(`
+        UPDATE Response
+        SET res_Status = @reason
+        WHERE reportID = @reportId
+      `);
+
+    // Send final response
     res.status(200).json({
       success: true,
-      message: 'Report marked as completed.',
+      message: 'Report and responses marked as completed.',
     });
+
   } catch (err) {
-    console.error('Error updating report status:', err);
+    console.error('Error updating report and responses:', err);
     res.status(500).json({
       success: false,
-      message: 'Failed to update report status',
+      message: 'Failed to update report or responses',
       error: err.message,
     });
   }
-  try {
-    const pool = await sql.connect(config);
-
-    await pool.request()
-      .input('reportID', sql.Int, reportId)
-      .query(`
-        UPDATE Response
-        SET res_Status = 'Completed'
-        WHERE reportID = @reportID
-      `);
-
-    res.status(200).json({ success: true, message: 'Responses marked as completed.' });
-  } catch (err) {
-    console.error('Error updating response statuses:', err);
-    res.status(500).json({ success: false, message: 'Failed to update responses', error: err.message });
-  }
 });
+
 
 /*FEEDBACK ENDPOINTS************************************* */
 app.post('/feedback/submit', async (req, res) => {
