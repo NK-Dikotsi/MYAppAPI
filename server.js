@@ -1102,11 +1102,10 @@ app.post('/api/notifications', async (req, res) => {
 });
 
 
-
 app.get('/api/messages/latest', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
   const lastMessageId = req.query.lastMessageId || 0;
-  const channelId = 1; // Melville Emergency Channel
+  const channelId = 1;
 
   try {
     const pool = await sql.connect(config);
@@ -1155,20 +1154,28 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
             `)
         )
       );
-
-      // Update the isRead status in the response
-      result.recordset.forEach(msg => {
-        if (unreadMessages.some(m => m.id === msg.id)) {
-          msg.isRead = true;
-        }
-      });
     }
 
-    // Format the response with images64 as array
-    const formattedMessages = result.recordset.map(msg => ({
-      ...msg,
-      images64: msg.images64 ? msg.images64.split(';').filter(Boolean) : []
-    }));
+    // Process images64 properly
+    const formattedMessages = result.recordset.map(msg => {
+      let imagesArray = [];
+      
+      if (msg.images64) {
+        try {
+          // Split by semicolon and filter out empty strings
+          imagesArray = msg.images64.split(';')
+            .filter(img => img && img.trim().length > 0)
+            .map(img => img.trim());
+        } catch (error) {
+          console.error('Error processing images64:', error);
+        }
+      }
+
+      return {
+        ...msg,
+        images64: imagesArray
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -1177,9 +1184,14 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
 
   } catch (err) {
     console.error('Error fetching latest messages:', err);
-    res.status(500).json({ success: false, message: 'Failed to fetch messages' });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch messages',
+      error: err.message 
+    });
   }
 });
+
 
 app.get('/currentReports', async (req, res) => {
   const { userId } = req.query;
