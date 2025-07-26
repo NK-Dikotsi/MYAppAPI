@@ -1783,39 +1783,42 @@ app.put('/reports/complete', async (req, res) => {
   try {
     const pool = await sql.connect(config);
 
-    // Update Report table
-    await pool.request()
-      .input('reportId', sql.Int, reportId)
-      .input('reason', sql.VarChar, reason)
-      .query(`
-        UPDATE Report
-        SET Report_Status = @reason
-        WHERE ReportID = @reportId
-      `);
+    // Run both updates in parallel
+    await Promise.all([
+      pool.request()
+        .input('reportId', sql.Int, reportId)
+        .input('reason', sql.VarChar, reason)
+        .query(`
+          UPDATE Report
+          SET Report_Status = @reason
+          WHERE ReportID = @reportId
+        `),
+      pool.request()
+        .input('reportId', sql.Int, reportId)
+        .input('reason', sql.VarChar, reason)
+        .query(`
+          UPDATE Response
+          SET res_Status = @reason
+          WHERE reportID = @reportId
+        `)
+    ]);
 
-    // Update Response table
-    await pool.request()
-      .input('reportId', sql.Int, reportId)
-      .input('reason', sql.VarChar, reason)
-      .query(`
-        UPDATE Response
-        SET res_Status = @reason
-        WHERE reportID = @reportId
-      `);
-
-    // Send final response
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: 'Report and responses marked as completed.',
     });
 
   } catch (err) {
     console.error('Error updating report and responses:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update report or responses',
-      error: err.message,
-    });
+
+    // Avoid duplicate response error
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update report or responses',
+        error: err.message,
+      });
+    }
   }
 });
 
