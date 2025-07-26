@@ -1770,7 +1770,8 @@ app.get('/trusted-contacts', requireAuth, async (req, res) => {
   }
 });
 app.put('/reports/complete', async (req, res) => {
-  const { reportId } = req.body;
+  const { reportId,reason } = req.body;
+  console.log('recieved Data',req.body);
 
   if (!reportId) {
     return res.status(400).json({
