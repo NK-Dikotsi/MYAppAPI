@@ -1229,9 +1229,11 @@ app.get('/api/streaks', requireAuth, async (req, res) => {
         ORDER BY COUNT(r.reportID) DESC
       `);
 
+    // Always return success with empty array if no streaks
     res.status(200).json({
       success: true,
-      streaks: result.recordset
+      hasStreaks: result.recordset.length > 0,
+      streaks: result.recordset || []
     });
 
   } catch (err) {
