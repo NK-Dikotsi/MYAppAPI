@@ -1198,6 +1198,52 @@ async function testRegistration(payload, label) {
 }
 
 
+/*************************************STREAKS************************************** */
+// GET /api/streaks - Get current user's streaks
+app.get('/api/streaks', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Get all reports where this user has responded multiple times
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT 
+          r.reportID,
+          COUNT(r.reportID) AS streakCount,
+          rep.emergencyType,
+          rep.emerDescription,
+          rep.Report_Location,
+          u.UserID AS reporterId,
+          u.FullName AS reporterName,
+          u.ProfilePhoto AS reporterPhoto
+        FROM Response r
+        JOIN Report rep ON r.reportID = rep.ReportID
+        JOIN Users u ON rep.ReporterID = u.UserID
+        WHERE r.UserID = @UserID
+        GROUP BY r.reportID, rep.emergencyType, rep.emerDescription, 
+                 rep.Report_Location, u.UserID, u.FullName, u.ProfilePhoto
+        HAVING COUNT(r.reportID) >= 2
+        ORDER BY COUNT(r.reportID) DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      streaks: result.recordset
+    });
+
+  } catch (err) {
+    console.error('Error fetching streaks:', err);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to fetch streaks' 
+    });
+  }
+});
+
+
 //***************************TRUSTED USERS FUNCTIONALITY****************************************************** */
 
 // Updated /api/trust-requests/send endpoint
