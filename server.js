@@ -814,9 +814,9 @@ app.get('/api/current-user', requireAuth, (req, res) => {
 });
 
 app.post('/api/messages', requireAuth, async (req, res) => {
-  const { content, images64 } = req.body; // Now accepts images64 array
+  const { content, image64 } = req.body;
   const channelId = 1; // Melville Emergency Channel
-  const senderId = req.session.user.id;
+  const senderId = req.session.user.id; // Get from session
 
   try {
     const pool = await sql.connect(config);
@@ -825,11 +825,11 @@ app.post('/api/messages', requireAuth, async (req, res) => {
       .input('ChannelID', sql.Int, channelId)
       .input('SenderID', sql.Int, senderId)
       .input('Content', sql.NVarChar(sql.MAX), content)
-      .input('Images64', sql.NVarChar(sql.MAX), images64 ? images64.join(';') : null)
+      .input('Image64', sql.NVarChar(sql.MAX), image64 || null)
       .query(`
         INSERT INTO Messages (ChannelID, SenderID, Content, images64)
         OUTPUT INSERTED.MessageID, INSERTED.SentAt
-        VALUES (@ChannelID, @SenderID, @Content, @Images64)
+        VALUES (@ChannelID, @SenderID, @Content, @Image64)
       `);
 
     // Get sender info
@@ -844,7 +844,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
         senderId,
         senderName: senderInfo.recordset[0]?.FullName || 'Unknown',
         content,
-        images64: images64 || [],
+        image64,
         sentAt: result.recordset[0].SentAt,
         isCurrentUser: true
       }
@@ -861,7 +861,6 @@ app.post('/api/messages', requireAuth, async (req, res) => {
 app.get('/api/messages', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
   const channelId = 1; // Melville Emergency Channel
-  const senderId = req.session.user.id; // Get fr
 
   try {
     const pool = await sql.connect(config);
@@ -871,20 +870,21 @@ app.get('/api/messages', requireAuth, async (req, res) => {
       .input('ChannelID', sql.Int, channelId)
       .input('UserID', sql.Int, userId)
       .query(`
-                SELECT 
-                    m.MessageID as id,
-                    m.SenderID as senderId,
-                    u.FullName as senderName,
-                    m.Content as text,
-                    m.SentAt as time,
-                    CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
-                    CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
-                FROM Messages m
-                JOIN Users u ON m.SenderID = u.UserID
-                LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
-                WHERE m.ChannelID = @ChannelID
-                ORDER BY m.SentAt ASC
-            `);
+        SELECT 
+            m.MessageID as id,
+            m.SenderID as senderId,
+            u.FullName as senderName,
+            m.Content as text,
+            m.images64 as image64,
+            m.SentAt as time,
+            CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
+            CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
+        FROM Messages m
+        JOIN Users u ON m.SenderID = u.UserID
+        LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+        WHERE m.ChannelID = @ChannelID
+        ORDER BY m.SentAt ASC
+      `);
 
     // Identify unread messages not sent by current user
     const unreadMessages = result.recordset.filter(msg =>
@@ -899,15 +899,15 @@ app.get('/api/messages', requireAuth, async (req, res) => {
             .input('MessageID', sql.Int, msg.id)
             .input('UserID', sql.Int, userId)
             .query(`
-                            IF NOT EXISTS (
-                                SELECT 1 FROM MessageReadStatus 
-                                WHERE MessageID = @MessageID AND UserID = @UserID
-                            )
-                            BEGIN
-                                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
-                                VALUES (@MessageID, @UserID, GETDATE())
-                            END
-                        `)
+              IF NOT EXISTS (
+                SELECT 1 FROM MessageReadStatus 
+                WHERE MessageID = @MessageID AND UserID = @UserID
+              )
+              BEGIN
+                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                VALUES (@MessageID, @UserID, GETDATE())
+              END
+            `)
         )
       );
 
@@ -1063,7 +1063,7 @@ app.post('/api/notifications', async (req, res) => {
 app.get('/api/messages/latest', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
   const lastMessageId = req.query.lastMessageId || 0;
-  const channelId = 1; // Add channel ID
+  const channelId = 1; // Melville Emergency Channel
 
   try {
     const pool = await sql.connect(config);
@@ -1073,20 +1073,21 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
       .input('LastMessageID', sql.Int, lastMessageId)
       .input('ChannelID', sql.Int, channelId)
       .query(`
-                SELECT 
-                    m.MessageID as id,
-                    m.SenderID as senderId,
-                    u.FullName as senderName,
-                    m.Content as text,
-                    m.SentAt as time,
-                    CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
-                    CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
-                FROM Messages m
-                JOIN Users u ON m.SenderID = u.UserID
-                LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
-                WHERE m.MessageID > @LastMessageID AND m.ChannelID = @ChannelID
-                ORDER BY m.SentAt ASC
-            `);
+        SELECT 
+            m.MessageID as id,
+            m.SenderID as senderId,
+            u.FullName as senderName,
+            m.Content as text,
+            m.images64 as image64,
+            m.SentAt as time,
+            CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
+            CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
+        FROM Messages m
+        JOIN Users u ON m.SenderID = u.UserID
+        LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+        WHERE m.MessageID > @LastMessageID AND m.ChannelID = @ChannelID
+        ORDER BY m.SentAt ASC
+      `);
 
     // Mark unread messages as read
     const unreadMessages = result.recordset.filter(msg =>
@@ -1100,15 +1101,15 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
             .input('MessageID', sql.Int, msg.id)
             .input('UserID', sql.Int, userId)
             .query(`
-                            IF NOT EXISTS (
-                                SELECT 1 FROM MessageReadStatus 
-                                WHERE MessageID = @MessageID AND UserID = @UserID
-                            )
-                            BEGIN
-                                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
-                                VALUES (@MessageID, @UserID, GETDATE())
-                            END
-                        `)
+              IF NOT EXISTS (
+                SELECT 1 FROM MessageReadStatus 
+                WHERE MessageID = @MessageID AND UserID = @UserID
+              )
+              BEGIN
+                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                VALUES (@MessageID, @UserID, GETDATE())
+              END
+            `)
         )
       );
 
