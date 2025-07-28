@@ -1972,8 +1972,8 @@ app.get('/feedback/:reportId', async (req, res) => {
 app.get('/responses', async (req, res) => {
   const userId = parseInt(req.query.userId);
 
-  if (!userId) {
-    return res.status(400).json({ error: 'Missing or invalid userId query parameter' });
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ success: false, message: 'Missing or invalid userId query parameter' });
   }
 
   try {
@@ -1983,12 +1983,13 @@ app.get('/responses', async (req, res) => {
       .input('UserID', sql.Int, userId)
       .query('SELECT * FROM Response WHERE UserID = @UserID');
 
-    res.status(200).json(result.recordset);
+    res.json({ success: true, Responses: result.recordset });
   } catch (err) {
     console.error('SQL Error:', err);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
 });
+
 
 
 
