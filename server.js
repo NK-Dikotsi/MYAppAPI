@@ -1205,8 +1205,6 @@ app.get('/api/streaks', requireAuth, async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-
-    // Get all reports where this user has responded multiple times
     const result = await pool.request()
       .input('UserID', sql.Int, userId)
       .query(`
@@ -1229,18 +1227,22 @@ app.get('/api/streaks', requireAuth, async (req, res) => {
         ORDER BY COUNT(r.reportID) DESC
       `);
 
-    // Always return success with empty array if no streaks
+    // Ensure proper JSON content type
+    res.setHeader('Content-Type', 'application/json');
     res.status(200).json({
       success: true,
       hasStreaks: result.recordset.length > 0,
-      streaks: result.recordset || []
+      streaks: result.recordset
     });
 
   } catch (err) {
     console.error('Error fetching streaks:', err);
+    // Ensure error response is JSON
+    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
       success: false,
-      message: 'Failed to fetch streaks' 
+      message: 'Failed to fetch streaks',
+      error: err.message // Include error details for debugging
     });
   }
 });
