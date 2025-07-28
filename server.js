@@ -1969,6 +1969,26 @@ app.get('/feedback/:reportId', async (req, res) => {
     });
   }
 });
+app.get('/responses', async (req, res) => {
+  const userId = parseInt(req.query.userId);
+
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing or invalid userId query parameter' });
+  }
+
+  try {
+    const pool = await sql.connect(dbConfig);
+    const result = await pool
+      .request()
+      .input('UserID', sql.Int, userId)
+      .query('SELECT * FROM Response WHERE UserID = @UserID');
+
+    res.status(200).json(result.recordset);
+  } catch (err) {
+    console.error('SQL Error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
 
 
 
