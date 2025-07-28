@@ -1977,7 +1977,7 @@ app.get('/responses', async (req, res) => {
   }
 
   try {
-    const pool = await sql.connect(dbConfig);
+    const pool = await sql.connect(config);
     const result = await pool
       .request()
       .input('UserID', sql.Int, userId)
