@@ -813,7 +813,76 @@ app.get('/api/current-user', requireAuth, (req, res) => {
   });
 });
 
-// POST /api/messages - For sending messages with images
+// GET /api/messages - Get all messages with images
+app.get('/api/messages', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  const channelId = 1;
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('ChannelID', sql.Int, channelId)
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT 
+          m.MessageID as id,
+          m.SenderID as senderId,
+          u.FullName as senderName,
+          m.Content as text,
+          m.images64,
+          m.SentAt as time,
+          CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
+          CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
+        FROM Messages m
+        JOIN Users u ON m.SenderID = u.UserID
+        LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+        WHERE m.ChannelID = @ChannelID
+        ORDER BY m.SentAt ASC
+      `);
+
+    // Process unread messages
+    const unreadMessages = result.recordset.filter(msg => !msg.isRead && !msg.isCurrentUser);
+
+    if (unreadMessages.length > 0) {
+      await Promise.all(
+        unreadMessages.map(msg =>
+          pool.request()
+            .input('MessageID', sql.Int, msg.id)
+            .input('UserID', sql.Int, userId)
+            .query(`
+              IF NOT EXISTS (
+                SELECT 1 FROM MessageReadStatus 
+                WHERE MessageID = @MessageID AND UserID = @UserID
+              )
+              BEGIN
+                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                VALUES (@MessageID, @UserID, GETDATE())
+              END
+            `)
+        )
+      );
+    }
+
+    // Format response with proper images array
+    const formattedMessages = result.recordset.map(msg => ({
+      ...msg,
+      images64: msg.images64 ? msg.images64.split(';').filter(img => img) : [],
+      time: new Date(msg.time).toISOString()
+    }));
+
+    res.status(200).json({
+      success: true,
+      messages: formattedMessages
+    });
+
+  } catch (err) {
+    console.error('Error fetching messages:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch messages' });
+  }
+});
+
+// POST /api/messages - Send message with or without images
 app.post('/api/messages', requireAuth, async (req, res) => {
   const { content, images64 } = req.body;
   const channelId = 1;
@@ -822,8 +891,17 @@ app.post('/api/messages', requireAuth, async (req, res) => {
   try {
     const pool = await sql.connect(config);
 
-    // Convert images array to semicolon-separated string
-    const imagesString = Array.isArray(images64) ? images64.join(';') : '';
+    // Handle images (array or single image)
+    let imagesString = '';
+    if (images64) {
+      if (Array.isArray(images64)) {
+        imagesString = images64.map(img => 
+          img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`
+        ).join(';');
+      } else {
+        imagesString = images64.startsWith('data:') ? images64 : `data:image/jpeg;base64,${images64}`;
+      }
+    }
 
     const result = await pool.request()
       .input('ChannelID', sql.Int, channelId)
@@ -847,10 +925,11 @@ app.post('/api/messages', requireAuth, async (req, res) => {
         id: result.recordset[0].MessageID,
         senderId,
         senderName: senderInfo.recordset[0]?.FullName || 'Unknown',
-        content,
-        images64: Array.isArray(images64) ? images64 : [],
-        sentAt: result.recordset[0].SentAt,
-        isCurrentUser: true
+        text: content,
+        images64: imagesString ? imagesString.split(';') : [],
+        time: new Date(result.recordset[0].SentAt).toISOString(),
+        isCurrentUser: true,
+        isRead: true
       }
     });
 
@@ -860,74 +939,37 @@ app.post('/api/messages', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/messages/image', async (req, res) => {
-  const messageId = parseInt(req.query.messageid);
-
-  if (isNaN(messageId)) {
-    return res.status(400).json({ success: false, message: 'Invalid or missing messageid query parameter' });
-  }
-
-  try {
-    const pool = await sql.connect(config);
-
-    const result = await pool.request()
-      .input('MessageID', sql.Int, messageId)
-      .query(`
-        SELECT images64 FROM Messages WHERE MessageID = @MessageID
-      `);
-
-    if (result.recordset.length === 0) {
-      return res.status(404).json({ success: false, message: 'Message not found' });
-    }
-
-    const rawImage = result.recordset[0].images64;
-
-    res.status(200).json({
-      success: true,
-      image: rawImage && rawImage.trim() !== '' ? rawImage : null
-    });
-
-  } catch (err) {
-    console.error('Error fetching image:', err);
-    res.status(500).json({ success: false, message: 'Failed to fetch image' });
-  }
-});
-
 // GET /api/messages
 app.get('/api/messages', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
-  const channelId = 1; // Melville Emergency Channel
-  const senderId = req.session.user.id; // Get fr
+  const channelId = 1;
 
   try {
     const pool = await sql.connect(config);
 
-    // First get all messages
     const result = await pool.request()
       .input('ChannelID', sql.Int, channelId)
       .input('UserID', sql.Int, userId)
       .query(`
-                SELECT 
-                    m.MessageID as id,
-                    m.SenderID as senderId,
-                    u.FullName as senderName,
-                    m.Content as text,
-                    m.SentAt as time,
-                    CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
-                    CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
-                FROM Messages m
-                JOIN Users u ON m.SenderID = u.UserID
-                LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
-                WHERE m.ChannelID = @ChannelID
-                ORDER BY m.SentAt ASC
-            `);
+        SELECT 
+          m.MessageID as id,
+          m.SenderID as senderId,
+          u.FullName as senderName,
+          m.Content as text,
+          m.images64,
+          m.SentAt as time,
+          CASE WHEN m.SenderID = @UserID THEN 1 ELSE 0 END as isCurrentUser,
+          CASE WHEN r.MessageID IS NOT NULL THEN 1 ELSE 0 END as isRead
+        FROM Messages m
+        JOIN Users u ON m.SenderID = u.UserID
+        LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+        WHERE m.ChannelID = @ChannelID
+        ORDER BY m.SentAt ASC
+      `);
 
-    // Identify unread messages not sent by current user
-    const unreadMessages = result.recordset.filter(msg =>
-      !msg.isRead && !msg.isCurrentUser
-    );
+    // Process unread messages
+    const unreadMessages = result.recordset.filter(msg => !msg.isRead && !msg.isCurrentUser);
 
-    // Mark them as read
     if (unreadMessages.length > 0) {
       await Promise.all(
         unreadMessages.map(msg =>
@@ -935,34 +977,41 @@ app.get('/api/messages', requireAuth, async (req, res) => {
             .input('MessageID', sql.Int, msg.id)
             .input('UserID', sql.Int, userId)
             .query(`
-                            IF NOT EXISTS (
-                                SELECT 1 FROM MessageReadStatus 
-                                WHERE MessageID = @MessageID AND UserID = @UserID
-                            )
-                            BEGIN
-                                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
-                                VALUES (@MessageID, @UserID, GETDATE())
-                            END
-                        `)
+              IF NOT EXISTS (
+                SELECT 1 FROM MessageReadStatus 
+                WHERE MessageID = @MessageID AND UserID = @UserID
+              )
+              BEGIN
+                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                VALUES (@MessageID, @UserID, GETDATE())
+              END
+            `)
         )
       );
-
-      // Update the isRead status in the response
-      result.recordset.forEach(msg => {
-        if (unreadMessages.some(m => m.id === msg.id)) {
-          msg.isRead = true;
-        }
-      });
     }
+
+    // Format response with proper images array
+    const formattedMessages = result.recordset.map(msg => ({
+      ...msg,
+      // Handle both null and empty string cases for images64
+      images64: msg.images64 && msg.images64.trim() !== '' 
+        ? msg.images64.split(';').filter(img => img.trim() !== '')
+        : [],
+      time: new Date(msg.time).toISOString()
+    }));
 
     res.status(200).json({
       success: true,
-      messages: result.recordset
+      messages: formattedMessages
     });
 
   } catch (err) {
     console.error('Error fetching messages:', err);
-    res.status(500).json({ success: false, message: 'Failed to fetch messages' });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch messages',
+      error: err.message 
+    });
   }
 });
 
@@ -1025,7 +1074,7 @@ app.post('/api/messages/read', requireAuth, async (req, res) => {
 
 
 // GET /api/messages/unread-count
-app.get('/api/messages', requireAuth, async (req, res) => {
+app.get('/api/messages/unread-count', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
   const channelId = 1;
 
@@ -1127,7 +1176,72 @@ app.post('/api/notifications', async (req, res) => {
   }
 });
 
+// POST /api/messages - Send message with or without images (varchar compatible)
+app.post('/api/messages', requireAuth, async (req, res) => {
+  const { content, images64 } = req.body;
+  const channelId = 1;
+  const senderId = req.session.user.id;
 
+  try {
+    const pool = await sql.connect(config);
+
+    // Handle images (varchar(max) compatible format)
+    let imagesString = '';
+    if (images64) {
+      if (Array.isArray(images64)) {
+        // Ensure we only store the base64 part without data URI prefix
+        imagesString = images64.map(img => 
+          img.replace(/^data:image\/\w+;base64,/, '')
+        ).join(';');
+      } else {
+        imagesString = images64.replace(/^data:image\/\w+;base64,/, '');
+      }
+    }
+
+    const result = await pool.request()
+      .input('ChannelID', sql.Int, channelId)
+      .input('SenderID', sql.Int, senderId)
+      .input('Content', sql.VarChar(sql.MAX), content)  // Match your table's VARCHAR type
+      .input('Images64', sql.VarChar(sql.MAX), imagesString)  // Using VARCHAR to match column
+      .query(`
+        INSERT INTO Messages (ChannelID, SenderID, Content, images64)
+        OUTPUT INSERTED.MessageID, INSERTED.SentAt
+        VALUES (@ChannelID, @SenderID, @Content, @Images64)
+      `);
+
+    // Get sender info
+    const senderInfo = await pool.request()
+      .input('UserID', sql.Int, senderId)
+      .query('SELECT FullName FROM Users WHERE UserID = @UserID');
+
+    // Prepare response with properly formatted images
+    const responseImages = imagesString 
+      ? imagesString.split(';').map(img => `data:image/jpeg;base64,${img}`)
+      : [];
+
+    res.status(201).json({
+      success: true,
+      message: {
+        id: result.recordset[0].MessageID,
+        senderId,
+        senderName: senderInfo.recordset[0]?.FullName || 'Unknown',
+        text: content,
+        images64: responseImages,
+        time: new Date(result.recordset[0].SentAt).toISOString(),
+        isCurrentUser: true,
+        isRead: true
+      }
+    });
+
+  } catch (err) {
+    console.error('Error sending message:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to send message',
+      error: err.message 
+    });
+  }
+});
 
 app.get('/api/messages/latest', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
@@ -1158,7 +1272,7 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
         ORDER BY m.SentAt ASC
       `);
 
-    // Process messages and mark unread ones as read
+    // Process unread messages
     const unreadMessages = result.recordset.filter(msg => !msg.isRead && !msg.isCurrentUser);
 
     if (unreadMessages.length > 0) {
@@ -1184,7 +1298,12 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
     // Format response with proper images array
     const formattedMessages = result.recordset.map(msg => ({
       ...msg,
-      images64: msg.images64 ? msg.images64.split(';').filter(img => img) : []
+      images64: msg.images64 && msg.images64.trim() !== ''
+        ? msg.images64.split(';')
+            .filter(img => img.trim() !== '')
+            .map(img => `data:image/jpeg;base64,${img}`)
+        : [],
+      time: new Date(msg.time).toISOString()
     }));
 
     res.status(200).json({
@@ -1194,9 +1313,14 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
 
   } catch (err) {
     console.error('Error fetching latest messages:', err);
-    res.status(500).json({ success: false, message: 'Failed to fetch messages' });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch messages',
+      error: err.message 
+    });
   }
 });
+
 
 app.get('/currentReports', async (req, res) => {
   const { userId } = req.query;
