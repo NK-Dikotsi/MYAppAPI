@@ -2400,17 +2400,23 @@ app.patch('/api/admin/:userId/darkmode', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+//******************BROADCAST MESSAGING ENDPOINTS ADMIN********************//
 // POST a new message to a channel
 app.post('/api/channels/:channelId/messages', async (req, res) => {
   const channelId = parseInt(req.params.channelId, 10);
   if (isNaN(channelId)) {
     return res.status(400).json({ error: 'Invalid channelId' });
   }
-  const { senderId, content } = req.body;
-
+  
+  const { senderId, content, images64 } = req.body;
   if (!senderId || !content) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
+
+  // Handle images64 (convert array to string or default to empty string)
+  const imagesString = Array.isArray(images64) && images64.length > 0 
+    ? images64.join(';') 
+    : '';
 
   try {
     const pool = await sql.connect(config);
@@ -2418,10 +2424,11 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
       .input('ChannelID', sql.Int, channelId)
       .input('SenderID', sql.Int, senderId)
       .input('Content', sql.VarChar, content)
+      .input('Images64', sql.NVarChar(sql.MAX), imagesString) // Add images64 input
       .query(`
-        INSERT INTO Messages (ChannelID, SenderID, Content, SentAt)
-        OUTPUT INSERTED.MessageID, INSERTED.SentAt
-        VALUES (@ChannelID, @SenderID, @Content, GETDATE())
+        INSERT INTO Messages (ChannelID, SenderID, Content, images64, SentAt)
+        OUTPUT INSERTED.MessageID, INSERTED.SentAt, INSERTED.images64
+        VALUES (@ChannelID, @SenderID, @Content, @Images64, GETDATE())
       `);
 
     if (result.recordset.length === 0) {
@@ -2433,11 +2440,16 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
       .input('UserID', sql.Int, senderId)
       .query('SELECT FullName FROM Users WHERE UserID = @UserID');
 
+    // Convert stored images string back to array for response
+    const storedImages = result.recordset[0].images64 || '';
+    const imagesArray = storedImages ? storedImages.split(';') : [];
+
     const newMessage = {
       MessageID: result.recordset[0].MessageID,
       SenderID: senderId,
       SenderName: senderResult.recordset[0].FullName,
       Content: content,
+      images64: imagesArray, // Array of base64 strings (empty if no images)
       SentAt: new Date(result.recordset[0].SentAt).toISOString()
     };
 
@@ -2465,6 +2477,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
           m.SenderID, 
           u.FullName AS SenderName, 
           m.Content, 
+          m.images64,  // Added column
           m.SentAt
         FROM Messages m
         JOIN Users u ON m.SenderID = u.UserID
@@ -2475,6 +2488,9 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
     res.json({
       messages: result.recordset.map(msg => ({
         ...msg,
+        images64: msg.images64 
+          ? msg.images64.split(';')  // Convert to array
+          : [],                      // Default to empty array
         SentAt: new Date(msg.SentAt).toISOString()
       }))
     });
