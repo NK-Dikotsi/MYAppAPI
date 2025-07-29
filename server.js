@@ -2461,7 +2461,6 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
 });
 
 // GET messages for a channel
-// GET messages for a channel
 app.get('/api/channels/:channelId/messages', async (req, res) => {
   const channelId = parseInt(req.params.channelId, 10);
   if (isNaN(channelId)) {
@@ -2478,7 +2477,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
           m.SenderID, 
           u.FullName AS SenderName, 
           m.Content, 
-          ISNULL(m.images64, '') AS images64,  
+          COALESCE(m.images64, '') AS images64,  
           m.SentAt
         FROM Messages m
         JOIN Users u ON m.SenderID = u.UserID
@@ -2487,19 +2486,29 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
       `);
 
     res.json({
-      messages: result.recordset.map(msg => ({
-        ...msg,
-        images64: msg.images64 
-          ? msg.images64.split(';').filter(img => img.trim() !== '')
-          : [],
-        SentAt: new Date(msg.SentAt).toISOString()
-      }))
+      messages: result.recordset.map(msg => {
+        // Handle image conversion safely
+        let imagesArray = [];
+        try {
+          if (msg.images64 && msg.images64.trim() !== '') {
+            imagesArray = msg.images64.split(';').filter(Boolean);
+          }
+        } catch (e) {
+          console.error('Error parsing images:', e);
+        }
+        
+        return {
+          ...msg,
+          images64: imagesArray,
+          SentAt: new Date(msg.SentAt).toISOString()
+        };
+      })
     });
   } catch (err) {
     console.error('Error fetching messages:', err);
     res.status(500).json({ 
       error: 'Internal server error',
-      details: err.message  // Return error details for debugging
+      details: err.message
     });
   }
 });
