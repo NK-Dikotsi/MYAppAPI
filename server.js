@@ -2477,7 +2477,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
           m.SenderID, 
           u.FullName AS SenderName, 
           m.Content, 
-          m.images64,  // Added column
+          m.images64,
           m.SentAt
         FROM Messages m
         JOIN Users u ON m.SenderID = u.UserID
@@ -2488,9 +2488,10 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
     res.json({
       messages: result.recordset.map(msg => ({
         ...msg,
+        // Handle null/undefined images64 safely
         images64: msg.images64 
-          ? msg.images64.split(';')  // Convert to array
-          : [],                      // Default to empty array
+          ? msg.images64.split(';').filter(img => img !== '')
+          : [],
         SentAt: new Date(msg.SentAt).toISOString()
       }))
     });
