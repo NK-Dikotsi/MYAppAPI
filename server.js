@@ -1199,12 +1199,23 @@ async function testRegistration(payload, label) {
 
 
 /*************************************STREAKS************************************** */
-// GET /api/streaks - Get current user's streaks
 app.get('/api/streaks', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
-
+  
   try {
     const pool = await sql.connect(config);
+    
+    // First, let's debug by checking if the user has any responses
+    const debugResult = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT COUNT(*) as totalResponses
+        FROM Response r
+        WHERE r.UserID = @UserID
+      `);
+    
+    console.log(`User ${userId} has ${debugResult.recordset[0].totalResponses} total responses`);
+    
     const result = await pool.request()
       .input('UserID', sql.Int, userId)
       .query(`
@@ -1218,31 +1229,44 @@ app.get('/api/streaks', requireAuth, async (req, res) => {
           u.FullName AS reporterName,
           u.ProfilePhoto AS reporterPhoto
         FROM Response r
-        JOIN Report rep ON r.reportID = rep.ReportID
-        JOIN Users u ON rep.ReporterID = u.UserID
-        WHERE r.UserID = @UserID
-        GROUP BY r.reportID, rep.emergencyType, rep.emerDescription, 
+        INNER JOIN Report rep ON r.reportID = rep.ReportID
+        INNER JOIN Users u ON rep.ReporterID = u.UserID
+        WHERE r.UserID = @UserID 
+          AND r.res_Status IS NOT NULL  -- Only count valid responses
+        GROUP BY r.reportID, rep.emergencyType, rep.emerDescription,
                  rep.Report_Location, u.UserID, u.FullName, u.ProfilePhoto
         HAVING COUNT(r.reportID) >= 2
         ORDER BY COUNT(r.reportID) DESC
       `);
+
+    console.log(`Found ${result.recordset.length} streaks for user ${userId}`);
+    
+    // Log the actual data for debugging
+    if (result.recordset.length > 0) {
+      console.log('Streak data:', JSON.stringify(result.recordset, null, 2));
+    }
 
     // Ensure proper JSON content type
     res.setHeader('Content-Type', 'application/json');
     res.status(200).json({
       success: true,
       hasStreaks: result.recordset.length > 0,
-      streaks: result.recordset
+      streaks: result.recordset,
+      debug: {
+        userId: userId,
+        totalResponses: debugResult.recordset[0].totalResponses,
+        streakCount: result.recordset.length
+      }
     });
 
   } catch (err) {
     console.error('Error fetching streaks:', err);
     // Ensure error response is JSON
     res.setHeader('Content-Type', 'application/json');
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Failed to fetch streaks',
-      error: err.message // Include error details for debugging
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
     });
   }
 });
