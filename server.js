@@ -2461,6 +2461,7 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
 });
 
 // GET messages for a channel
+// GET messages for a channel
 app.get('/api/channels/:channelId/messages', async (req, res) => {
   const channelId = parseInt(req.params.channelId, 10);
   if (isNaN(channelId)) {
@@ -2477,7 +2478,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
           m.SenderID, 
           u.FullName AS SenderName, 
           m.Content, 
-          m.images64,
+          ISNULL(m.images64, '') AS images64,  
           m.SentAt
         FROM Messages m
         JOIN Users u ON m.SenderID = u.UserID
@@ -2488,16 +2489,18 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
     res.json({
       messages: result.recordset.map(msg => ({
         ...msg,
-        // Handle null/undefined images64 safely
         images64: msg.images64 
-          ? msg.images64.split(';').filter(img => img !== '')
+          ? msg.images64.split(';').filter(img => img.trim() !== '')
           : [],
         SentAt: new Date(msg.SentAt).toISOString()
       }))
     });
   } catch (err) {
     console.error('Error fetching messages:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: err.message  // Return error details for debugging
+    });
   }
 });
 
