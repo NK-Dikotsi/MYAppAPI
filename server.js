@@ -2513,6 +2513,37 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
   }
 });
 
+// Mark all messages as read
+app.post('/api/messages/mark-all-read', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  const channelId = 1; // Melville Emergency Channel
+
+  try {
+    const pool = await sql.connect(config);
+    
+    await pool.request()
+      .input('UserID', sql.Int, userId)
+      .input('ChannelID', sql.Int, channelId)
+      .query(`
+        INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+        SELECT m.MessageID, @UserID, GETDATE()
+        FROM Messages m
+        LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+        WHERE m.ChannelID = @ChannelID
+          AND m.SenderID != @UserID
+          AND r.MessageID IS NULL
+      `);
+
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('Error marking all as read:', err);
+    res.status(500).json({ success: false, message: 'Failed to mark messages as read' });
+  }
+});
+
+
+//******************Manage users ENDPOINTS ADMIN********************//
+
 // Get all volunteers (community members with role "Volunteer")
 app.get('/api/volunteers', async (req, res) => {
   try {
