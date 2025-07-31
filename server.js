@@ -2515,7 +2515,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
 
 // Mark all messages as read
 app.post('/api/messages/:UserID/mark-all-read', async (req, res) => {
-  const userId = parseInt(req.params.channelId, 10);
+  const userId = parseInt(req.params.UserID, 10);
   const channelId = 1; // Melville Emergency Channel
 
   if (isNaN(UserID)) {
@@ -2542,6 +2542,106 @@ app.post('/api/messages/:UserID/mark-all-read', async (req, res) => {
   } catch (err) {
     console.error('Error marking all as read:', err);
     res.status(500).json({ success: false, message: 'Failed to mark messages as read' });
+  }
+});
+
+// Mark message as read
+app.post('/api/messages/:UserID/read', async (req, res) => {
+  const userId = parseInt(req.params.UserID, 10);
+  const { messageId } = req.body;
+
+  if (isNaN(UserID)) {
+    return res.status(400).json({ error: 'Invalid channelId' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    // First check if the message exists
+    const messageExists = await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .query('SELECT 1 FROM Messages WHERE MessageID = @MessageID');
+
+    if (messageExists.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Message not found'
+      });
+    }
+
+    // Check if already marked as read to avoid duplicates
+    const alreadyRead = await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .input('UserID', sql.Int, userId)
+      .query('SELECT 1 FROM MessageReadStatus WHERE MessageID = @MessageID AND UserID = @UserID');
+
+    if (alreadyRead.recordset.length > 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'Message was already marked as read'
+      });
+    }
+
+    // Insert with current timestamp
+    await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .input('UserID', sql.Int, userId)
+      .query(`
+                INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
+                VALUES (@MessageID, @UserID, GETDATE())
+            `);
+
+    res.status(200).json({
+      success: true,
+      readAt: new Date().toISOString()
+    });
+
+  } catch (err) {
+    console.error('Error marking message as read:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark message as read',
+      error: err.message
+    });
+  }
+});
+
+// GET /api/messages/unread-count
+app.get('/api/messages/:UserID/unread-count', requireAuth, async (req, res) => {
+  const userId = parseInt(req.params.UserID, 10);
+  const channelId = 1; // Melville Emergency 
+  
+  if (isNaN(UserID)) {
+    return res.status(400).json({ error: 'Invalid channelId' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .input('ChannelID', sql.Int, channelId)
+      .query(`
+                SELECT COUNT(*) as count
+                FROM Messages m
+                LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
+                WHERE m.ChannelID = @ChannelID
+                AND m.SenderID != @UserID  -- Only count messages from others
+                AND r.MessageID IS NULL    -- Only count unread messages
+            `);
+
+    res.status(200).json({
+      success: true,
+      count: result.recordset[0].count
+    });
+
+  } catch (err) {
+    console.error('Error counting unread messages:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to count unread messages',
+      error: err.message
+    });
   }
 });
 
