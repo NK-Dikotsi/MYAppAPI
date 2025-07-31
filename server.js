@@ -41,80 +41,206 @@ const EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
 const PHONE_PATTERN = /(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/g;
 const URL_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
 
+// Create a reusable worker instance
+let workerInstance = null;
+let workerPromise = null;
+
+async function getWorker() {
+  if (workerInstance) {
+    return workerInstance;
+  }
+
+  if (workerPromise) {
+    return workerPromise;
+  }
+
+  workerPromise = (async () => {
+    try {
+      // Simplified worker creation for Render.com compatibility
+      const worker = await createWorker('eng', 1, {
+        logger: m => console.log('OCR:', m),
+        errorHandler: err => console.error('OCR Error:', err)
+      });
+
+      workerInstance = worker;
+      return worker;
+    } catch (error) {
+      console.error('Failed to create OCR worker:', error);
+      workerPromise = null;
+      throw error;
+    }
+  })();
+
+  return workerPromise;
+}
+
 async function performOCR(imageBase64) {
-  // Render.com requires explicit worker initialization
-  const worker = await createWorker({
-    workerPath: require.resolve('tesseract.js/dist/worker.min.js'),
-    langPath: 'https://tessdata.projectnaptha.com/4.0.0',
-    corePath: require.resolve('tesseract.js-core/tesseract-core.wasm.js'),
-  });
+  let worker = null;
   
   try {
-    await worker.load();
-    await worker.loadLanguage('eng');
-    await worker.initialize('eng');
-    const { data: { text } } = await worker.recognize(
-      `data:image/jpeg;base64,${imageBase64}`
-    );
-    return text;
-  } finally {
-    await worker.terminate();
+    worker = await getWorker();
+    
+    // Convert base64 to buffer if needed
+    const imageData = `data:image/jpeg;base64,${imageBase64}`;
+    
+    const { data: { text } } = await worker.recognize(imageData, {
+      rectangles: [], // Process entire image
+    });
+    
+    return text.trim();
+  } catch (error) {
+    console.error('OCR processing failed:', error);
+    
+    // Reset worker on error
+    if (workerInstance) {
+      try {
+        await workerInstance.terminate();
+      } catch (termErr) {
+        console.error('Error terminating worker:', termErr);
+      }
+      workerInstance = null;
+      workerPromise = null;
+    }
+    
+    throw new Error(`OCR failed: ${error.message}`);
   }
 }
 
 function analyzeTextForAdvertising(text) {
-  if (!text) return { isAdvertising: false, detectedWords: [] };
+  if (!text || typeof text !== 'string') {
+    return { isAdvertising: false, detectedWords: [], contactInfo: [] };
+  }
 
   const lowerText = text.toLowerCase();
-  const detectedAdWords = ADVERTISING_KEYWORDS.filter(keyword => 
+  const detectedAdWords = ADVERTISING_KEYWORDS.filter(keyword =>
     lowerText.includes(keyword.toLowerCase())
   );
 
-  const hasContactInfo = (
-    EMAIL_PATTERN.test(text) || 
-    PHONE_PATTERN.test(text) || 
-    URL_PATTERN.test(text)
-  );
+  // Check for contact information
+  const emails = text.match(EMAIL_PATTERN) || [];
+  const phones = text.match(PHONE_PATTERN) || [];
+  const urls = text.match(URL_PATTERN) || [];
+  
+  const contactInfo = [...emails, ...phones, ...urls];
+  const hasContactInfo = contactInfo.length > 0;
 
-  const isAdvertising = (
-    detectedAdWords.length >= 2 || 
-    (detectedAdWords.length >= 1 && hasContactInfo)
+  // Scoring system for better detection
+  let score = 0;
+  
+  // Base score for advertising keywords
+  score += detectedAdWords.length * 10;
+  
+  // Bonus for contact info + keywords
+  if (hasContactInfo && detectedAdWords.length > 0) {
+    score += 25;
+  }
+  
+  // Bonus for multiple contact methods
+  if (contactInfo.length > 1) {
+    score += 15;
+  }
+  
+  // Check for common advertising phrases
+  const adPhrases = [
+    'limited time', 'act now', 'don\'t miss', 'call now', 'visit our',
+    'best price', 'lowest price', 'money back', 'satisfaction guaranteed',
+    'free shipping', 'no obligation', 'risk free'
+  ];
+  
+  const detectedPhrases = adPhrases.filter(phrase => 
+    lowerText.includes(phrase)
   );
+  
+  score += detectedPhrases.length * 20;
+
+  const isAdvertising = score >= 30; // Threshold for flagging
 
   return {
     isAdvertising,
-    detectedWords: [...new Set(detectedAdWords)] // Remove duplicates
+    detectedWords: [...new Set(detectedAdWords)],
+    detectedPhrases,
+    contactInfo,
+    score
   };
 }
 
 async function checkMessageForAds(content, imageBase64) {
   let reasons = [];
-  
-  // Check text content
-  const textAnalysis = analyzeTextForAdvertising(content);
-  if (textAnalysis.isAdvertising) {
-    reasons.push(`Text contains advertising: ${textAnalysis.detectedWords.join(', ')}`);
-  }
+  let totalScore = 0;
 
-  // Check image if exists
-  if (imageBase64) {
-    try {
-      const ocrText = await performOCR(imageBase64);
-      const imageAnalysis = analyzeTextForAdvertising(ocrText);
+  try {
+    // Check text content
+    if (content && content.trim()) {
+      const textAnalysis = analyzeTextForAdvertising(content);
+      totalScore += textAnalysis.score;
       
-      if (imageAnalysis.isAdvertising) {
-        reasons.push(`Image contains advertising: ${imageAnalysis.detectedWords.join(', ')}`);
+      if (textAnalysis.isAdvertising) {
+        const details = [];
+        if (textAnalysis.detectedWords.length > 0) {
+          details.push(`keywords: ${textAnalysis.detectedWords.join(', ')}`);
+        }
+        if (textAnalysis.detectedPhrases.length > 0) {
+          details.push(`phrases: ${textAnalysis.detectedPhrases.join(', ')}`);
+        }
+        if (textAnalysis.contactInfo.length > 0) {
+          details.push(`contact info detected`);
+        }
+        
+        reasons.push(`Text analysis (score: ${textAnalysis.score}) - ${details.join('; ')}`);
       }
-    } catch (err) {
-      console.error('Image analysis failed:', err);
-      reasons.push('Image analysis failed');
     }
-  }
 
-  return {
-    shouldFlag: reasons.length > 0,
-    reasons: reasons.join(' | ')
-  };
+    // Check image if exists
+    if (imageBase64) {
+      try {
+        console.log('Starting OCR analysis...');
+        const ocrText = await performOCR(imageBase64);
+        console.log('OCR extracted text:', ocrText.substring(0, 100) + '...');
+        
+        if (ocrText && ocrText.trim()) {
+          const imageAnalysis = analyzeTextForAdvertising(ocrText);
+          totalScore += imageAnalysis.score;
+          
+          if (imageAnalysis.isAdvertising) {
+            const details = [];
+            if (imageAnalysis.detectedWords.length > 0) {
+              details.push(`keywords: ${imageAnalysis.detectedWords.join(', ')}`);
+            }
+            if (imageAnalysis.detectedPhrases.length > 0) {
+              details.push(`phrases: ${imageAnalysis.detectedPhrases.join(', ')}`);
+            }
+            if (imageAnalysis.contactInfo.length > 0) {
+              details.push(`contact info detected`);
+            }
+            
+            reasons.push(`Image analysis (score: ${imageAnalysis.score}) - ${details.join('; ')}`);
+          }
+        } else {
+          console.log('No text extracted from image');
+        }
+      } catch (ocrError) {
+        console.error('OCR analysis failed:', ocrError);
+        // Don't flag just because OCR failed
+        reasons.push(`Image analysis failed: ${ocrError.message}`);
+      }
+    }
+
+    const shouldFlag = totalScore >= 50 || reasons.some(r => !r.includes('failed'));
+
+    return {
+      shouldFlag,
+      reasons: reasons.length > 0 ? reasons.join(' | ') : 'No advertising detected',
+      totalScore
+    };
+
+  } catch (error) {
+    console.error('Message analysis error:', error);
+    return {
+      shouldFlag: false,
+      reasons: `Analysis error: ${error.message}`,
+      totalScore: 0
+    };
+  }
 }
 
 
