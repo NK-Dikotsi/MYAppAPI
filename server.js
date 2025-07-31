@@ -78,16 +78,27 @@ async function performOCR(imageBase64) {
   let worker = null;
   
   try {
+    console.log('Starting OCR processing...');
     worker = await getWorker();
     
     // Convert base64 to buffer if needed
     const imageData = `data:image/jpeg;base64,${imageBase64}`;
     
-    const { data: { text } } = await worker.recognize(imageData, {
+    console.log('OCR worker ready, processing image...');
+    const { data: { text, confidence } } = await worker.recognize(imageData, {
       rectangles: [], // Process entire image
     });
     
-    return text.trim();
+    const cleanText = text.trim().replace(/\s+/g, ' ');
+    console.log(`OCR completed with confidence: ${confidence}%, extracted: "${cleanText.substring(0, 100)}${cleanText.length > 100 ? '...' : ''}"`);
+    
+    // Only return text if confidence is reasonable
+    if (confidence < 30) {
+      console.log('OCR confidence too low, skipping text analysis');
+      return '';
+    }
+    
+    return cleanText;
   } catch (error) {
     console.error('OCR processing failed:', error);
     
@@ -108,13 +119,24 @@ async function performOCR(imageBase64) {
 
 function analyzeTextForAdvertising(text) {
   if (!text || typeof text !== 'string') {
-    return { isAdvertising: false, detectedWords: [], contactInfo: [] };
+    return { isAdvertising: false, detectedWords: [], contactInfo: [], score: 0 };
   }
 
-  const lowerText = text.toLowerCase();
-  const detectedAdWords = ADVERTISING_KEYWORDS.filter(keyword =>
-    lowerText.includes(keyword.toLowerCase())
-  );
+  // Clean and normalize the text
+  const cleanText = text.replace(/[^\w\s@.-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const lowerText = cleanText.toLowerCase();
+  
+  console.log('Analyzing text:', cleanText.substring(0, 100) + (cleanText.length > 100 ? '...' : ''));
+
+  // Check for advertising keywords (case-insensitive)
+  const detectedAdWords = ADVERTISING_KEYWORDS.filter(keyword => {
+    const keywordLower = keyword.toLowerCase();
+    // Use word boundaries to avoid partial matches
+    const regex = new RegExp(`\\b${keywordLower}\\b`, 'i');
+    return regex.test(lowerText);
+  });
+
+  console.log('Detected ad words:', detectedAdWords);
 
   // Check for contact information
   const emails = text.match(EMAIL_PATTERN) || [];
@@ -124,36 +146,41 @@ function analyzeTextForAdvertising(text) {
   const contactInfo = [...emails, ...phones, ...urls];
   const hasContactInfo = contactInfo.length > 0;
 
+  console.log('Contact info found:', contactInfo);
+
   // Scoring system for better detection
   let score = 0;
   
   // Base score for advertising keywords
-  score += detectedAdWords.length * 10;
+  score += detectedAdWords.length * 15;
   
   // Bonus for contact info + keywords
   if (hasContactInfo && detectedAdWords.length > 0) {
-    score += 25;
+    score += 30;
   }
   
   // Bonus for multiple contact methods
   if (contactInfo.length > 1) {
-    score += 15;
+    score += 20;
   }
   
   // Check for common advertising phrases
   const adPhrases = [
     'limited time', 'act now', 'don\'t miss', 'call now', 'visit our',
     'best price', 'lowest price', 'money back', 'satisfaction guaranteed',
-    'free shipping', 'no obligation', 'risk free'
+    'free shipping', 'no obligation', 'risk free', 'special offer',
+    'huge discount', 'save money', 'get cash', 'earn money'
   ];
   
   const detectedPhrases = adPhrases.filter(phrase => 
-    lowerText.includes(phrase)
+    lowerText.includes(phrase.toLowerCase())
   );
   
-  score += detectedPhrases.length * 20;
+  score += detectedPhrases.length * 25;
 
-  const isAdvertising = score >= 30; // Threshold for flagging
+  console.log(`Analysis complete: score=${score}, keywords=${detectedAdWords.length}, phrases=${detectedPhrases.length}, contact=${contactInfo.length}`);
+
+  const isAdvertising = score >= 20; // Lowered threshold for more sensitive detection
 
   return {
     isAdvertising,
@@ -1088,32 +1115,45 @@ app.post('/api/messages', requireAuth, async (req, res) => {
       }
     });
 
-    // Perform content analysis in background after responding
-    setTimeout(async () => {
+    // Perform content analysis in background - DON'T BLOCK THE RESPONSE
+    // Use setImmediate to ensure this runs after the response is sent
+    setImmediate(async () => {
       try {
-        const { shouldFlag, reasons } = await checkMessageForAds(content, image64);
+        console.log(`Starting background analysis for message ${result.recordset[0].MessageID}`);
+        
+        const { shouldFlag, reasons, totalScore } = await checkMessageForAds(content, image64);
+        
+        console.log(`Analysis complete for message ${result.recordset[0].MessageID}: shouldFlag=${shouldFlag}, score=${totalScore}`);
         
         if (shouldFlag) {
-          await pool.request()
+          // Create new pool connection for background operation
+          const backgroundPool = await sql.connect(config);
+          
+          await backgroundPool.request()
             .input('MessageID', sql.Int, result.recordset[0].MessageID)
             .input('Flagged', sql.VarChar(sql.MAX), reasons)
             .query('UPDATE Messages SET Flagged = @Flagged WHERE MessageID = @MessageID');
 
-          await pool.request()
+          await backgroundPool.request()
             .input('MessageID', sql.Int, result.recordset[0].MessageID)
             .input('UserID', sql.Int, senderId)
-            .input('Reason', sql.VarChar(255), reasons)
+            .input('Reason', sql.VarChar(255), reasons.substring(0, 255)) // Ensure it fits in VARCHAR(255)
             .query(`
               INSERT INTO FlaggedMessages (MessageID, UserID, Reason)
               VALUES (@MessageID, @UserID, @Reason)
             `);
           
-          console.log(`Message ${result.recordset[0].MessageID} flagged: ${reasons}`);
+          console.log(`Message ${result.recordset[0].MessageID} flagged (score: ${totalScore}): ${reasons}`);
+          
+          // Close the background pool connection
+          await backgroundPool.close();
+        } else {
+          console.log(`Message ${result.recordset[0].MessageID} passed content check (score: ${totalScore})`);
         }
       } catch (err) {
-        console.error('Error in background content check:', err);
+        console.error(`Error in background content check for message ${result.recordset[0].MessageID}:`, err);
       }
-    }, 0);
+    });
 
   } catch (err) {
     console.error('Error sending message:', err);
