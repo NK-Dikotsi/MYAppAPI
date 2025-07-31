@@ -42,20 +42,23 @@ const PHONE_PATTERN = /(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0
 const URL_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
 
 async function performOCR(imageBase64) {
+  // Render.com requires explicit worker initialization
   const worker = await createWorker({
-    logger: m => console.log(m) // Optional: log OCR progress
+    workerPath: require.resolve('tesseract.js/dist/worker.min.js'),
+    langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+    corePath: require.resolve('tesseract.js-core/tesseract-core.wasm.js'),
   });
   
   try {
+    await worker.load();
     await worker.loadLanguage('eng');
     await worker.initialize('eng');
-    const { data: { text } } = await worker.recognize(`data:image/jpeg;base64,${imageBase64}`);
-    await worker.terminate();
+    const { data: { text } } = await worker.recognize(
+      `data:image/jpeg;base64,${imageBase64}`
+    );
     return text;
-  } catch (err) {
-    console.error('OCR Error:', err);
+  } finally {
     await worker.terminate();
-    return '';
   }
 }
 
