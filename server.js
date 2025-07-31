@@ -2514,9 +2514,13 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
 });
 
 // Mark all messages as read
-app.post('/api/messages/mark-all-read', requireAuth, async (req, res) => {
-  const userId = req.session.user.id;
+app.post('/api/messages/:UserID/mark-all-read', async (req, res) => {
+  const userId = parseInt(req.params.channelId, 10);
   const channelId = 1; // Melville Emergency Channel
+
+  if (isNaN(UserID)) {
+    return res.status(400).json({ error: 'Invalid channelId' });
+  }
 
   try {
     const pool = await sql.connect(config);
