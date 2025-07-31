@@ -10,6 +10,112 @@ app.use(express.json({ limit: '64mb' }));
 app.use(express.urlencoded({ limit: '64mb', extended: true }));
 app.use(cors());
 
+
+
+/********************OCR & MESSAGE CHECK HELPERS********************* */
+const { createWorker } = require('tesseract.js');
+const { parse } = require('node-html-parser');
+
+// Advertising detection keywords
+const ADVERTISING_KEYWORDS = [
+  'sale', 'offer', 'discount', 'promo', 'promotion', 'deal', 'bargain', 'cheap', 'free',
+  'limited', 'exclusive', 'special', 'bonus', 'save', 'percent', '%', 'off', 'reduced',
+  'clearance', 'liquidation', 'closing', 'must', 'now', 'today', 'hurry', 'act',
+  'buy', 'purchase', 'order', 'shop', 'store', 'market', 'business', 'company',
+  'service', 'product', 'brand', 'quality', 'professional', 'certified', 'licensed',
+  'guaranteed', 'warranty', 'insurance', 'investment', 'loan', 'credit', 'finance',
+  'call', 'contact', 'visit', 'click', 'subscribe', 'join', 'register', 'sign',
+  'download', 'install', 'get', 'claim', 'win', 'earn', 'make', 'money', 'cash',
+  'prize', 'reward', 'gift', 'voucher', 'coupon', 'code',
+  'new', 'latest', 'best', 'top', 'premium', 'luxury', 'ultimate', 'amazing',
+  'incredible', 'fantastic', 'excellent', 'perfect', 'unique', 'revolutionary',
+  'breakthrough', 'advanced', 'innovative', 'cutting-edge', 'state-of-the-art',
+  'urgent', 'immediate', 'instant', 'quick', 'fast', 'rush', 'asap', 'deadline',
+  'expires', 'limited time', 'while supplies', 'first come', 'don\'t miss',
+  'repair', 'maintenance', 'cleaning', 'delivery', 'shipping', 'installation',
+  'consultation', 'quote', 'estimate', 'appointment', 'booking', 'reservation'
+];
+
+// Patterns for contact information
+const EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
+const PHONE_PATTERN = /(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/g;
+const URL_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/g;
+
+async function performOCR(imageBase64) {
+  const worker = await createWorker({
+    logger: m => console.log(m) // Optional: log OCR progress
+  });
+  
+  try {
+    await worker.loadLanguage('eng');
+    await worker.initialize('eng');
+    const { data: { text } } = await worker.recognize(`data:image/jpeg;base64,${imageBase64}`);
+    await worker.terminate();
+    return text;
+  } catch (err) {
+    console.error('OCR Error:', err);
+    await worker.terminate();
+    return '';
+  }
+}
+
+function analyzeTextForAdvertising(text) {
+  if (!text) return { isAdvertising: false, detectedWords: [] };
+
+  const lowerText = text.toLowerCase();
+  const detectedAdWords = ADVERTISING_KEYWORDS.filter(keyword => 
+    lowerText.includes(keyword.toLowerCase())
+  );
+
+  const hasContactInfo = (
+    EMAIL_PATTERN.test(text) || 
+    PHONE_PATTERN.test(text) || 
+    URL_PATTERN.test(text)
+  );
+
+  const isAdvertising = (
+    detectedAdWords.length >= 2 || 
+    (detectedAdWords.length >= 1 && hasContactInfo)
+  );
+
+  return {
+    isAdvertising,
+    detectedWords: [...new Set(detectedAdWords)] // Remove duplicates
+  };
+}
+
+async function checkMessageForAds(content, imageBase64) {
+  let reasons = [];
+  
+  // Check text content
+  const textAnalysis = analyzeTextForAdvertising(content);
+  if (textAnalysis.isAdvertising) {
+    reasons.push(`Text contains advertising: ${textAnalysis.detectedWords.join(', ')}`);
+  }
+
+  // Check image if exists
+  if (imageBase64) {
+    try {
+      const ocrText = await performOCR(imageBase64);
+      const imageAnalysis = analyzeTextForAdvertising(ocrText);
+      
+      if (imageAnalysis.isAdvertising) {
+        reasons.push(`Image contains advertising: ${imageAnalysis.detectedWords.join(', ')}`);
+      }
+    } catch (err) {
+      console.error('Image analysis failed:', err);
+      reasons.push('Image analysis failed');
+    }
+  }
+
+  return {
+    shouldFlag: reasons.length > 0,
+    reasons: reasons.join(' | ')
+  };
+}
+
+
+
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
 app.use(cookieParser());
@@ -816,20 +922,21 @@ app.get('/api/current-user', requireAuth, (req, res) => {
 app.post('/api/messages', requireAuth, async (req, res) => {
   const { content, image64 } = req.body;
   const channelId = 1; // Melville Emergency Channel
-  const senderId = req.session.user.id; // Get from session
+  const senderId = req.session.user.id;
 
   try {
     const pool = await sql.connect(config);
 
+    // First insert the message (initially not flagged)
     const result = await pool.request()
       .input('ChannelID', sql.Int, channelId)
       .input('SenderID', sql.Int, senderId)
       .input('Content', sql.NVarChar(sql.MAX), content)
       .input('Image64', sql.NVarChar(sql.MAX), image64 || null)
       .query(`
-        INSERT INTO Messages (ChannelID, SenderID, Content, images64)
+        INSERT INTO Messages (ChannelID, SenderID, Content, images64, Flagged)
         OUTPUT INSERTED.MessageID, INSERTED.SentAt
-        VALUES (@ChannelID, @SenderID, @Content, @Image64)
+        VALUES (@ChannelID, @SenderID, @Content, @Image64, NULL)
       `);
 
     // Get sender info
@@ -837,6 +944,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
       .input('UserID', sql.Int, senderId)
       .query('SELECT FullName FROM Users WHERE UserID = @UserID');
 
+    // Respond immediately to client
     res.status(201).json({
       success: true,
       message: {
@@ -846,9 +954,37 @@ app.post('/api/messages', requireAuth, async (req, res) => {
         content,
         image64,
         sentAt: result.recordset[0].SentAt,
-        isCurrentUser: true
+        isCurrentUser: true,
+        flagged: null // Initially not flagged
       }
     });
+
+    // Perform content analysis in background after responding
+    setTimeout(async () => {
+      try {
+        const { shouldFlag, reasons } = await checkMessageForAds(content, image64);
+        
+        if (shouldFlag) {
+          await pool.request()
+            .input('MessageID', sql.Int, result.recordset[0].MessageID)
+            .input('Flagged', sql.VarChar(sql.MAX), reasons)
+            .query('UPDATE Messages SET Flagged = @Flagged WHERE MessageID = @MessageID');
+
+          await pool.request()
+            .input('MessageID', sql.Int, result.recordset[0].MessageID)
+            .input('UserID', sql.Int, senderId)
+            .input('Reason', sql.VarChar(255), reasons)
+            .query(`
+              INSERT INTO FlaggedMessages (MessageID, UserID, Reason)
+              VALUES (@MessageID, @UserID, @Reason)
+            `);
+          
+          console.log(`Message ${result.recordset[0].MessageID} flagged: ${reasons}`);
+        }
+      } catch (err) {
+        console.error('Error in background content check:', err);
+      }
+    }, 0);
 
   } catch (err) {
     console.error('Error sending message:', err);
@@ -1132,6 +1268,35 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
   }
 });
 
+
+app.get('/api/messages/flagged', requireAuth, async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .query(`
+        SELECT 
+          m.MessageID, m.Content, m.images64, m.SentAt, m.Flagged,
+          u.FullName as SenderName,
+          f.FlagID, f.Reason
+        FROM Messages m
+        JOIN FlaggedMessages f ON m.MessageID = f.MessageID
+        JOIN Users u ON m.SenderID = u.UserID
+        WHERE m.Flagged IS NOT NULL
+        ORDER BY m.SentAt DESC
+      `);
+
+    res.status(200).json({
+      success: true,
+      flaggedMessages: result.recordset
+    });
+
+  } catch (err) {
+    console.error('Error fetching flagged messages:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch flagged messages' });
+  }
+});
+
 app.get('/currentReports', async (req, res) => {
   const { userId } = req.query;
 
@@ -1154,6 +1319,8 @@ app.get('/currentReports', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+
 
 
 
@@ -1198,78 +1365,6 @@ async function testRegistration(payload, label) {
 }
 
 
-/*************************************STREAKS************************************** */
-app.get('/api/streaks', requireAuth, async (req, res) => {
-  const userId = req.session.user.id;
-  
-  try {
-    const pool = await sql.connect(config);
-    
-    // First, let's debug by checking if the user has any responses
-    const debugResult = await pool.request()
-      .input('UserID', sql.Int, userId)
-      .query(`
-        SELECT COUNT(*) as totalResponses
-        FROM Response r
-        WHERE r.UserID = @UserID
-      `);
-    
-    console.log(`User ${userId} has ${debugResult.recordset[0].totalResponses} total responses`);
-    
-    const result = await pool.request()
-      .input('UserID', sql.Int, userId)
-      .query(`
-        SELECT 
-          r.reportID,
-          COUNT(r.reportID) AS streakCount,
-          rep.emergencyType,
-          rep.emerDescription,
-          rep.Report_Location,
-          u.UserID AS reporterId,
-          u.FullName AS reporterName,
-          u.ProfilePhoto AS reporterPhoto
-        FROM Response r
-        INNER JOIN Report rep ON r.reportID = rep.ReportID
-        INNER JOIN Users u ON rep.ReporterID = u.UserID
-        WHERE r.UserID = @UserID 
-          AND r.res_Status IS NOT NULL  -- Only count valid responses
-        GROUP BY r.reportID, rep.emergencyType, rep.emerDescription,
-                 rep.Report_Location, u.UserID, u.FullName, u.ProfilePhoto
-        HAVING COUNT(r.reportID) >= 2
-        ORDER BY COUNT(r.reportID) DESC
-      `);
-
-    console.log(`Found ${result.recordset.length} streaks for user ${userId}`);
-    
-    // Log the actual data for debugging
-    if (result.recordset.length > 0) {
-      console.log('Streak data:', JSON.stringify(result.recordset, null, 2));
-    }
-
-    // Ensure proper JSON content type
-    res.setHeader('Content-Type', 'application/json');
-    res.status(200).json({
-      success: true,
-      hasStreaks: result.recordset.length > 0,
-      streaks: result.recordset,
-      debug: {
-        userId: userId,
-        totalResponses: debugResult.recordset[0].totalResponses,
-        streakCount: result.recordset.length
-      }
-    });
-
-  } catch (err) {
-    console.error('Error fetching streaks:', err);
-    // Ensure error response is JSON
-    res.setHeader('Content-Type', 'application/json');
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch streaks',
-      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
-    });
-  }
-});
 
 
 //***************************TRUSTED USERS FUNCTIONALITY****************************************************** */
