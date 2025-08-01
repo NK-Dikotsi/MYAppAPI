@@ -196,8 +196,11 @@ async function checkMessageForAds(content, imageBase64) {
   let totalScore = 0;
 
   try {
+    console.log('=== Starting Message Analysis ===');
+    
     // Check text content
     if (content && content.trim()) {
+      console.log('Analyzing text content...');
       const textAnalysis = analyzeTextForAdvertising(content);
       totalScore += textAnalysis.score;
       
@@ -213,7 +216,10 @@ async function checkMessageForAds(content, imageBase64) {
           details.push(`contact info detected`);
         }
         
-        reasons.push(`Text analysis (score: ${textAnalysis.score}) - ${details.join('; ')}`);
+        reasons.push(`Advertising Text Identified - ${details.join('; ')}`);
+        console.log(`Text flagged with score: ${textAnalysis.score}`);
+      } else {
+        console.log(`Text passed with score: ${textAnalysis.score}`);
       }
     }
 
@@ -222,9 +228,9 @@ async function checkMessageForAds(content, imageBase64) {
       try {
         console.log('Starting OCR analysis...');
         const ocrText = await performOCR(imageBase64);
-        console.log('OCR extracted text:', ocrText.substring(0, 100) + '...');
         
-        if (ocrText && ocrText.trim()) {
+        if (ocrText && ocrText.trim().length > 0) {
+          console.log('Analyzing OCR extracted text...');
           const imageAnalysis = analyzeTextForAdvertising(ocrText);
           totalScore += imageAnalysis.score;
           
@@ -240,19 +246,28 @@ async function checkMessageForAds(content, imageBase64) {
               details.push(`contact info detected`);
             }
             
-            reasons.push(`Image analysis (score: ${imageAnalysis.score}) - ${details.join('; ')}`);
+            reasons.push(`Image Advertising identified  - ${details.join('; ')} - OCR text: "${ocrText.substring(0, 50)}${ocrText.length > 50 ? '...' : ''}"`);
+            console.log(`Image flagged with score: ${imageAnalysis.score}`);
+          } else {
+            console.log(`Image passed with score: ${imageAnalysis.score}`);
           }
         } else {
-          console.log('No text extracted from image');
+          console.log('No meaningful text extracted from image');
         }
       } catch (ocrError) {
         console.error('OCR analysis failed:', ocrError);
-        // Don't flag just because OCR failed
-        reasons.push(`Image analysis failed: ${ocrError.message}`);
+        // Don't penalize for OCR failure, but log it
+        console.log('Continuing analysis without image text due to OCR failure');
       }
     }
 
-    const shouldFlag = totalScore >= 50 || reasons.some(r => !r.includes('failed'));
+    // Lower threshold for flagging - more sensitive
+    const shouldFlag = totalScore >= 20;
+
+    console.log(`=== Analysis Complete ===`);
+    console.log(`Total Score: ${totalScore}`);
+    console.log(`Should Flag: ${shouldFlag}`);
+    console.log(`Reasons: ${reasons.join(' | ') || 'No violations detected'}`);
 
     return {
       shouldFlag,
@@ -270,6 +285,30 @@ async function checkMessageForAds(content, imageBase64) {
   }
 }
 
+async function cleanup() {
+  if (workerInstance) {
+    try {
+      await workerInstance.terminate();
+      console.log('OCR worker terminated successfully');
+    } catch (error) {
+      console.error('Error terminating OCR worker:', error);
+    }
+    workerInstance = null;
+    workerPromise = null;
+  }
+}
+
+// Handle process termination
+process.on('SIGTERM', cleanup);
+process.on('SIGINT', cleanup);
+process.on('exit', cleanup);
+
+module.exports = {
+  checkMessageForAds,
+  analyzeTextForAdvertising,
+  performOCR,
+  cleanup
+};
 
 
 const session = require('express-session');
