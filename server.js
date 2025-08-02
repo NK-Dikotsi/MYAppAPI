@@ -76,32 +76,32 @@ async function getWorker() {
 
 async function performOCR(imageBase64) {
   let worker = null;
-  
+
   try {
     console.log('Starting OCR processing...');
     worker = await getWorker();
-    
+
     // Convert base64 to buffer if needed
     const imageData = `data:image/jpeg;base64,${imageBase64}`;
-    
+
     console.log('OCR worker ready, processing image...');
     const { data: { text, confidence } } = await worker.recognize(imageData, {
       rectangles: [], // Process entire image
     });
-    
+
     const cleanText = text.trim().replace(/\s+/g, ' ');
     console.log(`OCR completed with confidence: ${confidence}%, extracted: "${cleanText.substring(0, 100)}${cleanText.length > 100 ? '...' : ''}"`);
-    
+
     // Only return text if confidence is reasonable
     if (confidence < 30) {
       console.log('OCR confidence too low, skipping text analysis');
       return '';
     }
-    
+
     return cleanText;
   } catch (error) {
     console.error('OCR processing failed:', error);
-    
+
     // Reset worker on error
     if (workerInstance) {
       try {
@@ -112,7 +112,7 @@ async function performOCR(imageBase64) {
       workerInstance = null;
       workerPromise = null;
     }
-    
+
     throw new Error(`OCR failed: ${error.message}`);
   }
 }
@@ -125,7 +125,7 @@ function analyzeTextForAdvertising(text) {
   // Clean and normalize the text
   const cleanText = text.replace(/[^\w\s@.-]/g, ' ').replace(/\s+/g, ' ').trim();
   const lowerText = cleanText.toLowerCase();
-  
+
   console.log('Analyzing text:', cleanText.substring(0, 100) + (cleanText.length > 100 ? '...' : ''));
 
   // Check for advertising keywords (case-insensitive)
@@ -142,7 +142,7 @@ function analyzeTextForAdvertising(text) {
   const emails = text.match(EMAIL_PATTERN) || [];
   const phones = text.match(PHONE_PATTERN) || [];
   const urls = text.match(URL_PATTERN) || [];
-  
+
   const contactInfo = [...emails, ...phones, ...urls];
   const hasContactInfo = contactInfo.length > 0;
 
@@ -150,20 +150,20 @@ function analyzeTextForAdvertising(text) {
 
   // Scoring system for better detection
   let score = 0;
-  
+
   // Base score for advertising keywords
   score += detectedAdWords.length * 15;
-  
+
   // Bonus for contact info + keywords
   if (hasContactInfo && detectedAdWords.length > 0) {
     score += 30;
   }
-  
+
   // Bonus for multiple contact methods
   if (contactInfo.length > 1) {
     score += 20;
   }
-  
+
   // Check for common advertising phrases
   const adPhrases = [
     'limited time', 'act now', 'don\'t miss', 'call now', 'visit our',
@@ -171,11 +171,11 @@ function analyzeTextForAdvertising(text) {
     'free shipping', 'no obligation', 'risk free', 'special offer',
     'huge discount', 'save money', 'get cash', 'earn money'
   ];
-  
-  const detectedPhrases = adPhrases.filter(phrase => 
+
+  const detectedPhrases = adPhrases.filter(phrase =>
     lowerText.includes(phrase.toLowerCase())
   );
-  
+
   score += detectedPhrases.length * 25;
 
   console.log(`Analysis complete: score=${score}, keywords=${detectedAdWords.length}, phrases=${detectedPhrases.length}, contact=${contactInfo.length}`);
@@ -197,13 +197,13 @@ async function checkMessageForAds(content, imageBase64) {
 
   try {
     console.log('=== Starting Message Analysis ===');
-    
+
     // Check text content
     if (content && content.trim()) {
       console.log('Analyzing text content...');
       const textAnalysis = analyzeTextForAdvertising(content);
       totalScore += textAnalysis.score;
-      
+
       if (textAnalysis.isAdvertising) {
         const details = [];
         if (textAnalysis.detectedWords.length > 0) {
@@ -215,7 +215,7 @@ async function checkMessageForAds(content, imageBase64) {
         if (textAnalysis.contactInfo.length > 0) {
           details.push(`contact info detected`);
         }
-        
+
         reasons.push(`Advertising Text Identified - ${details.join('; ')}`);
         console.log(`Text flagged with score: ${textAnalysis.score}`);
       } else {
@@ -228,12 +228,12 @@ async function checkMessageForAds(content, imageBase64) {
       try {
         console.log('Starting OCR analysis...');
         const ocrText = await performOCR(imageBase64);
-        
+
         if (ocrText && ocrText.trim().length > 0) {
           console.log('Analyzing OCR extracted text...');
           const imageAnalysis = analyzeTextForAdvertising(ocrText);
           totalScore += imageAnalysis.score;
-          
+
           if (imageAnalysis.isAdvertising) {
             const details = [];
             if (imageAnalysis.detectedWords.length > 0) {
@@ -245,7 +245,7 @@ async function checkMessageForAds(content, imageBase64) {
             if (imageAnalysis.contactInfo.length > 0) {
               details.push(`contact info detected`);
             }
-            
+
             reasons.push(`Image Advertising identified  - ${details.join('; ')} - OCR text: "${ocrText.substring(0, 50)}${ocrText.length > 50 ? '...' : ''}"`);
             console.log(`Image flagged with score: ${imageAnalysis.score}`);
           } else {
@@ -1159,15 +1159,15 @@ app.post('/api/messages', requireAuth, async (req, res) => {
     setImmediate(async () => {
       try {
         console.log(`Starting background analysis for message ${result.recordset[0].MessageID}`);
-        
+
         const { shouldFlag, reasons, totalScore } = await checkMessageForAds(content, image64);
-        
+
         console.log(`Analysis complete for message ${result.recordset[0].MessageID}: shouldFlag=${shouldFlag}, score=${totalScore}`);
-        
+
         if (shouldFlag) {
           // Create new pool connection for background operation
           const backgroundPool = await sql.connect(config);
-          
+
           await backgroundPool.request()
             .input('MessageID', sql.Int, result.recordset[0].MessageID)
             .input('Flagged', sql.VarChar(sql.MAX), reasons)
@@ -1181,9 +1181,9 @@ app.post('/api/messages', requireAuth, async (req, res) => {
               INSERT INTO FlaggedMessages (MessageID, UserID, Reason)
               VALUES (@MessageID, @UserID, @Reason)
             `);
-          
+
           console.log(`Message ${result.recordset[0].MessageID} flagged (score: ${totalScore}): ${reasons}`);
-          
+
           // Close the background pool connection
           await backgroundPool.close();
         } else {
@@ -2368,6 +2368,54 @@ app.get('/responses', async (req, res) => {
   }
 });
 
+//group messages
+app.post('/group/sendMessage', async (req, res) => {
+  const { userID, msg, reportID } = req.body;
+
+  if (!userID || !msg || !reportID) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    await pool.request()
+      .input('userID', sql.Int, userID)
+      .input('msg', sql.VarChar(sql.MAX), msg)
+      .input('reportID', sql.Int, reportID)
+      .query(`
+        INSERT INTO groupMessage (userID, msg, reportID)
+        VALUES (@userID, @msg, @reportID)
+      `);
+
+    res.status(201).json({ message: 'Message sent successfully' });
+  } catch (err) {
+    console.error('Error inserting message:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+app.get('/group/getMessages', async (req, res) => {
+  const reportID = req.query.reportID;
+
+  if (!reportID) {
+    return res.status(400).json({ error: 'Missing reportID in query params' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('reportID', sql.Int, reportID)
+      .query(`
+        SELECT * FROM groupMessage
+        WHERE reportID = @reportID
+        ORDER BY timeSent ASC
+      `);
+
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching messages:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 
 
@@ -2710,15 +2758,15 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
   if (isNaN(channelId)) {
     return res.status(400).json({ error: 'Invalid channelId' });
   }
-  
+
   const { senderId, content, images64 } = req.body;
   if (!senderId || !content) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
   // Handle images64 (convert array to string or default to empty string)
-  const imagesString = Array.isArray(images64) && images64.length > 0 
-    ? images64.join(';') 
+  const imagesString = Array.isArray(images64) && images64.length > 0
+    ? images64.join(';')
     : '';
 
   try {
@@ -2799,7 +2847,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
         } catch (e) {
           console.error('Error parsing images:', e);
         }
-        
+
         return {
           ...msg,
           images64: imagesArray,
@@ -2809,7 +2857,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching messages:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Internal server error',
       details: err.message
     });
@@ -2827,7 +2875,7 @@ app.post('/api/messages/:UserID/mark-all-read', async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    
+
     await pool.request()
       .input('UserID', sql.Int, userId)
       .input('ChannelID', sql.Int, channelId)
@@ -2913,7 +2961,7 @@ app.post('/api/messages/:UserID/read', async (req, res) => {
 app.get('/api/messages/:UserID/unread-count', requireAuth, async (req, res) => {
   const userId = parseInt(req.params.UserID, 10);
   const channelId = 1; // Melville Emergency 
-  
+
   if (isNaN(UserID)) {
     return res.status(400).json({ error: 'Invalid channelId' });
   }
