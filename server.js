@@ -2383,8 +2383,8 @@ app.post('/group/sendMessage', async (req, res) => {
       .input('msg', sql.VarChar(sql.MAX), msg)
       .input('reportID', sql.Int, reportID)
       .query(`
-        INSERT INTO groupMessage (userID, msg, reportID)
-        VALUES (@userID, @msg, @reportID)
+        INSERT INTO groupMessage (userID, msg, reportID, timeSent)
+        VALUES (@userID, @msg, @reportID, GETDATE())
       `);
 
     res.status(201).json({ message: 'Message sent successfully' });
