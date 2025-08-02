@@ -2410,7 +2410,7 @@ app.get('/group/getMessages', async (req, res) => {
         ORDER BY timeSent ASC
       `);
 
-    res.json(result.recordset);
+    res.json({success:true, Messages: result.recordset});
   } catch (err) {
     console.error('Error fetching messages:', err);
     res.status(500).json({ error: 'Server error' });
