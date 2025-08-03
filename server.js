@@ -3106,7 +3106,7 @@ app.get('/api/flags/counts', async (req, res) => {
     res.status(200).json(countsMap);
   } catch (err) {
     console.error('Error fetching flag counts:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: err });
   }
 });
 
