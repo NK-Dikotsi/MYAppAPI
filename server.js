@@ -2440,6 +2440,31 @@ app.get('/getFullName', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+app.get('/trusted/count', async (req, res) => {
+  const userId = parseInt(req.query.user);
+
+  if (isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user parameter' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool
+      .request()
+      .input('userId', sql.Int, userId)
+      .query(`
+        SELECT COUNT(*) AS TrustedCount
+        FROM TrustedContact
+        WHERE TrustingUserID = @userId
+      `);
+
+    const count = result.recordset[0].TrustedCount;
+    res.json({ userId, trustedContacts: count });
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
 
