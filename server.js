@@ -3086,7 +3086,6 @@ app.get('/api/volunteers', async (req, res) => {
 });
 
 // New endpoint to get flag counts
-// Add this endpoint to your server.js
 app.get('/api/flags/counts', async (req, res) => {
   try {
     const query = `
@@ -3105,8 +3104,12 @@ app.get('/api/flags/counts', async (req, res) => {
 
     res.status(200).json(countsMap);
   } catch (err) {
-    console.error('Error fetching flag counts:', err);
-    res.status(500).json({ error: err });
+    console.error('Detailed error fetching flag counts:', err);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 });
 
