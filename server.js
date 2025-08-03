@@ -533,7 +533,7 @@ app.put('/updateUser', async (req, res) => {
       .input('Username', sql.VarChar, username)
       .input('PhoneNumber', sql.VarChar, phoneNumber)
       .input('ProfilePhoto', sql.VarChar, imageBase64)
-      .input('Gender', sql.VarChar(max), gender)
+      .input('Gender', sql.VarChar, gender)
       .query(`
                 UPDATE [dbo].[Users]
                 SET FullName = @FullName,
