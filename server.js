@@ -2439,29 +2439,7 @@ app.get('/getFullName', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-app.get('/getReporter', async (req, res) => {
-  const reportID = req.query.reportID;
 
-  if (!reportID) {
-    return res.status(400).json({ error: 'Missing reportID in query parameters' });
-  }
-
-  try {
-    const pool = await sql.connect(config);
-    const result = await pool.request()
-      .input('reportID', sql.Int, reportID)
-      .query('SELECT ReporterID FROM Report WHERE ReportID = @reportID');
-
-    if (result.recordset.length === 0) {
-      return res.status(404).json({ error: 'Report not found' });
-    }
-
-    res.json({ ReporterID: result.recordset[0].ReporterID });
-  } catch (err) {
-    console.error('Database error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 
 
 
