@@ -360,7 +360,7 @@ app.use(cors());
 
 // Registration Endpoint
 app.post('/register', async (req, res) => {
-  const { fullName, email, password, phoneNumber, role, dob, homeAddress, imageBase64 } = req.body;
+  const { fullName, email, password, phoneNumber, role, dob, homeAddress, imageBase64, gender } = req.body;
   const Username = email.split("@")[0];
   const userType = 'CommunityMember';
   console.log('data: ', req.body);
@@ -379,12 +379,13 @@ app.post('/register', async (req, res) => {
       .input('CreatedAt', sql.DateTime, new Date())
       .input('ProfilePhoto', sql.VarChar, imageBase64)
       .input('AcceptedTerms', sql.VarChar, 'No')
+      .input('Gender', sql.VarChar, gender)
       .query(`
            INSERT INTO [dbo].[Users]
-           (FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto, AcceptedTerms)
+           (FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto, AcceptedTerms, Gender)
            OUTPUT INSERTED.UserID
            VALUES
-           (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, @CreatedAt, @ProfilePhoto, @AcceptedTerms)
+           (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, @CreatedAt, @ProfilePhoto, @AcceptedTerms, @Gender)
             `);
 
     const userID = usersResult.recordset[0].UserID;
