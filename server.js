@@ -3086,8 +3086,13 @@ app.get('/api/volunteers', async (req, res) => {
 });
 
 // New endpoint to get flag counts
+// Get flag counts for all users
 app.get('/api/flags/counts', async (req, res) => {
   try {
+    // Connect to the database using your existing pattern
+    const pool = await sql.connect(config);
+
+    // Query to count flags per user
     const query = `
       SELECT CAST(UserID AS VARCHAR) AS UserID, COUNT(FlagID) AS flagCount
       FROM FlaggedMessages
@@ -3096,18 +3101,16 @@ app.get('/api/flags/counts', async (req, res) => {
 
     const result = await pool.request().query(query);
     
+    // Convert to { UserID: count } mapping
     const countsMap = {};
     result.recordset.forEach(row => {
       countsMap[row.UserID] = row.flagCount;
     });
 
-    res.status(200).json(countsMap);
+    res.json(countsMap);
   } catch (err) {
-    console.error('Detailed error fetching flag counts:', err);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      details: err.message
-    });
+    console.error('Error fetching flag counts:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
