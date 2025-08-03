@@ -3393,3 +3393,207 @@ app.get('/getReportsadmin', async (req, res) => {
     });
   }
 });
+
+//******************STATISTICS ENDPOINTS ADMIN********************//
+
+// Helper function to calculate date ranges
+function getDateRange(timeFrame) {
+  const now = new Date();
+  const start = new Date(now);
+  
+  switch(timeFrame) {
+    case 'day':
+      start.setDate(now.getDate() - 1);
+      return { start, end: now };
+    case 'week':
+      start.setDate(now.getDate() - 7);
+      return { start, end: now };
+    case 'month':
+      start.setMonth(now.getMonth() - 1);
+      return { start, end: now };
+    case 'year':
+      start.setFullYear(now.getFullYear() - 1);
+      return { start, end: now };
+    default:
+      start.setMonth(now.getMonth() - 1);
+      return { start, end: now };
+  }
+}
+
+// Total Incidents Overview
+app.get('/api/analytics/overview', async (req, res) => {
+  try {
+    const { timeFrame = 'month' } = req.query;
+    const { start, end } = getDateRange(timeFrame);
+    
+    const pool = await sql.connect(config);
+    
+    // Get total reported incidents in time frame
+    const reportedQuery = `
+      SELECT COUNT(*) AS count
+      FROM Report
+      WHERE dateReported BETWEEN @start AND @end
+    `;
+    
+    // Get resolved incidents in time frame
+    const resolvedQuery = `
+      SELECT COUNT(*) AS count
+      FROM Report
+      WHERE dateReported BETWEEN @start AND @end
+        AND Report_Status = 'Resolved'
+    `;
+    
+    const reportedRes = await pool.request()
+      .input('start', sql.DateTime, start)
+      .input('end', sql.DateTime, end)
+      .query(reportedQuery);
+    
+    const resolvedRes = await pool.request()
+      .input('start', sql.DateTime, start)
+      .input('end', sql.DateTime, end)
+      .query(resolvedQuery);
+    
+    const reported = reportedRes.recordset[0].count;
+    const resolved = resolvedRes.recordset[0].count;
+    const unresolved = reported - resolved;
+    
+    res.json({ reported, resolved, unresolved });
+  } catch (err) {
+    console.error('Error fetching overview data:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Reports Over Time
+app.get('/api/analytics/time', async (req, res) => {
+  try {
+    const { timeFrame = 'month' } = req.query;
+    const { start, end } = getDateRange(timeFrame);
+    const pool = await sql.connect(config);
+    
+    let query, labels;
+    
+    switch(timeFrame) {
+      case 'day':
+        // Group by hour
+        query = `
+          SELECT DATEPART(HOUR, dateReported) AS hour, COUNT(*) AS count
+          FROM Report
+          WHERE dateReported BETWEEN @start AND @end
+          GROUP BY DATEPART(HOUR, dateReported)
+          ORDER BY hour
+        `;
+        labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+        break;
+        
+      case 'week':
+        // Group by day
+        query = `
+          SELECT DATEPART(WEEKDAY, dateReported) AS day, COUNT(*) AS count
+          FROM Report
+          WHERE dateReported BETWEEN @start AND @end
+          GROUP BY DATEPART(WEEKDAY, dateReported)
+          ORDER BY day
+        `;
+        labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        break;
+        
+      case 'month':
+        // Group by day of month
+        query = `
+          SELECT DATEPART(DAY, dateReported) AS day, COUNT(*) AS count
+          FROM Report
+          WHERE dateReported BETWEEN @start AND @end
+          GROUP BY DATEPART(DAY, dateReported)
+          ORDER BY day
+        `;
+        // Generate day labels (1-31)
+        labels = Array.from({ length: 31 }, (_, i) => (i + 1).toString());
+        break;
+        
+      case 'year':
+        // Group by month
+        query = `
+          SELECT DATEPART(MONTH, dateReported) AS month, COUNT(*) AS count
+          FROM Report
+          WHERE dateReported BETWEEN @start AND @end
+          GROUP BY DATEPART(MONTH, dateReported)
+          ORDER BY month
+        `;
+        labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        break;
+    }
+    
+    const result = await pool.request()
+      .input('start', sql.DateTime, start)
+      .input('end', sql.DateTime, end)
+      .query(query);
+    
+    // Create data array with zeros for all labels
+    const data = labels.map(() => 0);
+    
+    // Fill in actual counts
+    result.recordset.forEach(row => {
+      const index = timeFrame === 'day' ? row.hour : 
+                   timeFrame === 'week' ? (row.day % 7) : 
+                   timeFrame === 'month' ? (row.day - 1) : 
+                   (row.month - 1);
+      if (index >= 0 && index < data.length) {
+        data[index] = row.count;
+      }
+    });
+    
+    res.json({ labels, data });
+  } catch (err) {
+    console.error('Error fetching time data:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Reports by Type
+app.get('/api/analytics/type', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    
+    const query = `
+      SELECT emergencyType, COUNT(*) AS count
+      FROM Report
+      GROUP BY emergencyType
+    `;
+    
+    const result = await pool.request().query(query);
+    
+    // Map and order the types
+    const typeMap = {
+      'Crime': 'Crime',
+      'Medical': 'Medical',
+      'Fire': 'Fire',
+      'Natural Disaster': 'Natural Disaster',
+      'Community': 'Other'
+    };
+    
+    // Initialize counts for all types
+    const counts = {
+      'Crime': 0,
+      'Medical': 0,
+      'Fire': 0,
+      'Natural Disaster': 0,
+      'Other': 0
+    };
+    
+    // Fill counts from database
+    result.recordset.forEach(row => {
+      const type = typeMap[row.emergencyType] || 'Other';
+      counts[type] = (counts[type] || 0) + row.count;
+    });
+    
+    // Convert to arrays in the desired order
+    const labels = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'Other'];
+    const data = labels.map(label => counts[label]);
+    
+    res.json({ labels, data });
+  } catch (err) {
+    console.error('Error fetching type data:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
