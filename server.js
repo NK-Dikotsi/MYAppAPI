@@ -2410,10 +2410,33 @@ app.get('/group/getMessages', async (req, res) => {
         ORDER BY timeSent ASC
       `);
 
-    res.json({success:true, Messages: result.recordset});
+    res.json({ success: true, Messages: result.recordset });
   } catch (err) {
     console.error('Error fetching messages:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+app.get('/getFullName', async (req, res) => {
+  const userID = req.query.userID;
+
+  if (!userID) {
+    return res.status(400).json({ error: 'Missing userID query parameter' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('UserID', sql.Int, userID)
+      .query('SELECT FullName FROM Users WHERE UserID = @UserID');
+
+    if (result.recordset.length > 0) {
+      res.status(200).json({ fullName: result.recordset[0].FullName });
+    } else {
+      res.status(404).json({ error: 'User not found' });
+    }
+  } catch (err) {
+    console.error('Database error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
