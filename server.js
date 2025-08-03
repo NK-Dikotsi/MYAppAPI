@@ -3089,14 +3089,13 @@ app.get('/api/volunteers', async (req, res) => {
 app.get('/api/flags/counts', async (req, res) => {
   try {
     const query = `
-      SELECT UserID, COUNT(FlagID) AS flagCount
+      SELECT CAST(UserID AS VARCHAR) AS UserID, COUNT(FlagID) AS flagCount
       FROM FlaggedMessages
       GROUP BY UserID
     `;
 
     const result = await pool.request().query(query);
     
-    // Create a mapping of UserID to flagCount
     const countsMap = {};
     result.recordset.forEach(row => {
       countsMap[row.UserID] = row.flagCount;
@@ -3107,8 +3106,7 @@ app.get('/api/flags/counts', async (req, res) => {
     console.error('Detailed error fetching flag counts:', err);
     res.status(500).json({ 
       error: 'Internal server error',
-      details: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+      details: err.message
     });
   }
 });
