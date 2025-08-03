@@ -3085,6 +3085,31 @@ app.get('/api/volunteers', async (req, res) => {
   }
 });
 
+// New endpoint to get flag counts
+app.get('/api/flags/counts', async (req, res) => {
+  try {
+    // Query to count flags per user
+    const query = `
+      SELECT UserID, COUNT(*) AS flagCount
+      FROM FlaggedMessages
+      GROUP BY UserID
+    `;
+
+    const result = await pool.request().query(query);
+    
+    // Convert to { UserID: count } mapping
+    const countsMap = result.recordSet.reduce((acc, row) => {
+      acc[row.UserID] = row.flagCount;
+      return acc;
+    }, {});
+
+    res.json(countsMap);
+  } catch (err) {
+    console.error('Error fetching flag counts:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Put a user to sleep
 app.post('/api/sleep', async (req, res) => {
   const { userId, durationHours } = req.body;
