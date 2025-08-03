@@ -521,7 +521,7 @@ app.get('/getReports', async (req, res) => {
 });
 
 app.put('/updateUser', async (req, res) => {
-  const { userID, fullName, phoneNumber, username, dob, homeAddress, imageBase64 } = req.body;
+  const { userID, fullName, phoneNumber, username, dob, homeAddress, imageBase64, gender } = req.body;
 
   try {
     const pool = await sql.connect(config);
@@ -533,12 +533,14 @@ app.put('/updateUser', async (req, res) => {
       .input('Username', sql.VarChar, username)
       .input('PhoneNumber', sql.VarChar, phoneNumber)
       .input('ProfilePhoto', sql.VarChar, imageBase64)
+      .input('Gender', sql.VarChar(max), gender)
       .query(`
                 UPDATE [dbo].[Users]
                 SET FullName = @FullName,
                     Username = @Username,
                     PhoneNumber = @PhoneNumber,
-                    ProfilePhoto = @ProfilePhoto
+                    ProfilePhoto = @ProfilePhoto,
+                    Gender = @Gender
                 WHERE UserID = @UserID
             `);
 
