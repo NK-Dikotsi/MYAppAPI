@@ -3351,6 +3351,22 @@ app.get('/community/count', async (req, res) => {
     });
   }
 });
+//get crime report
+app.get('/getCrimeReport', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.query(`
+      SELECT * FROM [dbo].[Report]
+      WHERE emergencyType = 'Crime'
+    `);
+
+    // Return list of crime reports as 'Reports' array
+    res.status(200).json({ success: true, Reports: result.recordset });
+  } catch (err) {
+    console.error('SQL ERROR', err);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
 
 app.get('/getReportsadmin', async (req, res) => {
   try {
