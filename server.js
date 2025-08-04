@@ -3611,3 +3611,75 @@ app.get('/api/analytics/type', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Top Responders Pie Chart
+app.get('/api/analytics/top-responders', async (req, res) => {
+  try {
+    const { timeFrame = 'month' } = req.query;
+    const { start, end } = getDateRange(timeFrame);
+    const pool = await sql.connect(config);
+    
+    const query = `
+      SELECT TOP 5 
+        u.UserID,
+        u.FullName,
+        COUNT(r.ResponseID) AS responseCount
+      FROM Response r
+      JOIN Users u ON r.UserID = u.UserID
+      JOIN Report rep ON r.reportID = rep.ReportID
+      WHERE rep.dateReported BETWEEN '${start}' AND '${end}'
+      GROUP BY u.UserID, u.FullName
+      ORDER BY responseCount DESC
+    `;
+    
+    const result = await pool.request().query(query);
+    
+    const labels = result.recordset.map(row => `${row.FullName} (ID: ${row.UserID})`);
+    const data = result.recordset.map(row => row.responseCount);
+    
+    res.json({ labels, data });
+  } catch (err) {
+    console.error('Error fetching top responders:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Request Lifecycle Funnel
+app.get('/api/analytics/funnel', async (req, res) => {
+  try {
+    const { timeFrame = 'month' } = req.query;
+    const { start, end } = getDateRange(timeFrame);
+    const pool = await sql.connect(config);
+    
+    const query = `
+      SELECT 
+        (SELECT COUNT(*) FROM Report 
+         WHERE dateReported BETWEEN '${start}' AND '${end}') AS logged,
+        
+        (SELECT COUNT(DISTINCT r.reportID) FROM Response r
+         JOIN Report rep ON r.reportID = rep.ReportID
+         WHERE rep.dateReported BETWEEN '${start}' AND '${end}') AS accepted,
+        
+        (SELECT COUNT(*) FROM Report 
+         WHERE Report_Status = 'Completed'
+         AND dateReported BETWEEN '${start}' AND '${end}') AS resolved,
+         
+        (SELECT COUNT(*) FROM Report 
+         WHERE Report_Status = 'Escalated'
+         AND dateReported BETWEEN '${start}' AND '${end}') AS escalated
+    `;
+    
+    const result = await pool.request().query(query);
+    const row = result.recordset[0];
+    
+    res.json({
+      logged: row.logged || 0,
+      accepted: row.accepted || 0,
+      resolved: row.resolved || 0,
+      escalated: row.escalated || 0
+    });
+  } catch (err) {
+    console.error('Error fetching funnel data:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
