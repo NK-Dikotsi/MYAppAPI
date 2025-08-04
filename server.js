@@ -3459,7 +3459,7 @@ app.get('/api/analytics/overview', async (req, res) => {
       SELECT COUNT(*) AS count
       FROM Report
       WHERE dateReported BETWEEN @start AND @end
-        AND Report_Status = 'Resolved'
+        AND Report_Status = 'Completed'
     `;
     
     const reportedRes = await pool.request()
