@@ -3378,8 +3378,10 @@ app.get('/getReportsadmin', async (req, res) => {
         EmergencyType,
         EmerDescription,
         Report_Location,
-        Report_Status
+        Report_Status,
+        dateReported
       FROM Report
+      WHERE CAST(dateReported AS DATE) = CAST(GETDATE() AS DATE)
     `);
 
     const reports = result.recordset;
@@ -3388,7 +3390,7 @@ app.get('/getReportsadmin', async (req, res) => {
     if (count === 0) {
       return res.status(200).json({
         success: true,
-        message: 'No reports found.',
+        message: 'No reports found for today.',
         count: 0,
         Reports: [],
       });
@@ -3396,7 +3398,7 @@ app.get('/getReportsadmin', async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: `${count} report(s) found.`,
+      message: `${count} report(s) found for today.`,
       count,
       Reports: reports,
     });
@@ -3409,6 +3411,7 @@ app.get('/getReportsadmin', async (req, res) => {
     });
   }
 });
+
 
 //******************STATISTICS ENDPOINTS ADMIN********************//
 
