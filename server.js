@@ -3415,7 +3415,7 @@ app.get('/getReportsadmin', async (req, res) => {
 
 //******************STATISTICS ENDPOINTS ADMIN********************//
 
-// Helper function to calculate date ranges
+// Helper function to format dates for SQL Server
 function getDateRange(timeFrame) {
   const now = new Date();
   const start = new Date(now);
@@ -3423,23 +3423,28 @@ function getDateRange(timeFrame) {
   switch(timeFrame) {
     case 'day':
       start.setDate(now.getDate() - 1);
-      return { start, end: now };
+      break;
     case 'week':
       start.setDate(now.getDate() - 7);
-      return { start, end: now };
+      break;
     case 'month':
       start.setMonth(now.getMonth() - 1);
-      return { start, end: now };
+      break;
     case 'year':
       start.setFullYear(now.getFullYear() - 1);
-      return { start, end: now };
+      break;
     default:
       start.setMonth(now.getMonth() - 1);
-      return { start, end: now };
   }
+  
+  // Format dates for SQL Server
+  return {
+    start: start.toISOString().slice(0, 19).replace('T', ' '),
+    end: now.toISOString().slice(0, 19).replace('T', ' ')
+  };
 }
 
-// Total Incidents Overview
+// Total Incidents Overview - FIXED VERSION
 app.get('/api/analytics/overview', async (req, res) => {
   try {
     const { timeFrame = 'month' } = req.query;
@@ -3451,110 +3456,99 @@ app.get('/api/analytics/overview', async (req, res) => {
     const reportedQuery = `
       SELECT COUNT(*) AS count
       FROM Report
-      WHERE dateReported BETWEEN @start AND @end
+      WHERE dateReported BETWEEN '${start}' AND '${end}'
     `;
     
-    // Get resolved incidents in time frame
+    // Get resolved incidents in time frame - using 'Resolved' status
     const resolvedQuery = `
       SELECT COUNT(*) AS count
       FROM Report
-      WHERE dateReported BETWEEN @start AND @end
+      WHERE dateReported BETWEEN '${start}' AND '${end}'
         AND Report_Status = 'Completed'
     `;
     
-    const reportedRes = await pool.request()
-      .input('start', sql.DateTime, start)
-      .input('end', sql.DateTime, end)
-      .query(reportedQuery);
+    const reportedRes = await pool.request().query(reportedQuery);
+    const resolvedRes = await pool.request().query(resolvedQuery);
     
-    const resolvedRes = await pool.request()
-      .input('start', sql.DateTime, start)
-      .input('end', sql.DateTime, end)
-      .query(resolvedQuery);
-    
-    const reported = reportedRes.recordset[0].count;
-    const resolved = resolvedRes.recordset[0].count;
+    const reported = reportedRes.recordset[0]?.count || 0;
+    const resolved = resolvedRes.recordset[0]?.count || 0;
     const unresolved = reported - resolved;
     
     res.json({ reported, resolved, unresolved });
   } catch (err) {
     console.error('Error fetching overview data:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: err.message
+    });
   }
 });
 
-// Reports Over Time
+
+// Reports Over Time - FIXED VERSION
 app.get('/api/analytics/time', async (req, res) => {
   try {
     const { timeFrame = 'month' } = req.query;
     const { start, end } = getDateRange(timeFrame);
     const pool = await sql.connect(config);
     
-    let query, labels;
+    let query = '';
+    let labels = [];
     
-    switch(timeFrame) {
-      case 'day':
-        // Group by hour
-        query = `
-          SELECT DATEPART(HOUR, dateReported) AS hour, COUNT(*) AS count
-          FROM Report
-          WHERE dateReported BETWEEN @start AND @end
-          GROUP BY DATEPART(HOUR, dateReported)
-          ORDER BY hour
-        `;
-        labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
-        break;
-        
-      case 'week':
-        // Group by day
-        query = `
-          SELECT DATEPART(WEEKDAY, dateReported) AS day, COUNT(*) AS count
-          FROM Report
-          WHERE dateReported BETWEEN @start AND @end
-          GROUP BY DATEPART(WEEKDAY, dateReported)
-          ORDER BY day
-        `;
-        labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        break;
-        
-      case 'month':
-        // Group by day of month
-        query = `
-          SELECT DATEPART(DAY, dateReported) AS day, COUNT(*) AS count
-          FROM Report
-          WHERE dateReported BETWEEN @start AND @end
-          GROUP BY DATEPART(DAY, dateReported)
-          ORDER BY day
-        `;
-        // Generate day labels (1-31)
-        labels = Array.from({ length: 31 }, (_, i) => (i + 1).toString());
-        break;
-        
-      case 'year':
-        // Group by month
-        query = `
-          SELECT DATEPART(MONTH, dateReported) AS month, COUNT(*) AS count
-          FROM Report
-          WHERE dateReported BETWEEN @start AND @end
-          GROUP BY DATEPART(MONTH, dateReported)
-          ORDER BY month
-        `;
-        labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        break;
+    if (timeFrame === 'day') {
+      // Group by hour
+      query = `
+        SELECT DATEPART(HOUR, dateReported) AS hour, COUNT(*) AS count
+        FROM Report
+        WHERE dateReported BETWEEN '${start}' AND '${end}'
+        GROUP BY DATEPART(HOUR, dateReported)
+        ORDER BY hour
+      `;
+      labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+    } 
+    else if (timeFrame === 'week') {
+      // Group by day of week
+      query = `
+        SELECT DATEPART(WEEKDAY, dateReported) AS day, COUNT(*) AS count
+        FROM Report
+        WHERE dateReported BETWEEN '${start}' AND '${end}'
+        GROUP BY DATEPART(WEEKDAY, dateReported)
+        ORDER BY day
+      `;
+      labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    }
+    else if (timeFrame === 'month') {
+      // Group by day of month
+      query = `
+        SELECT DAY(dateReported) AS day, COUNT(*) AS count
+        FROM Report
+        WHERE dateReported BETWEEN '${start}' AND '${end}'
+        GROUP BY DAY(dateReported)
+        ORDER BY day
+      `;
+      labels = Array.from({ length: 31 }, (_, i) => (i + 1).toString());
+    }
+    else { // year
+      // Group by month
+      query = `
+        SELECT MONTH(dateReported) AS month, COUNT(*) AS count
+        FROM Report
+        WHERE dateReported BETWEEN '${start}' AND '${end}'
+        GROUP BY MONTH(dateReported)
+        ORDER BY month
+      `;
+      labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     }
     
-    const result = await pool.request()
-      .input('start', sql.DateTime, start)
-      .input('end', sql.DateTime, end)
-      .query(query);
+    const result = await pool.request().query(query);
     
-    // Create data array with zeros for all labels
+    // Create data array with zeros
     const data = labels.map(() => 0);
     
-    // Fill in actual counts
+    // Fill with actual data
     result.recordset.forEach(row => {
       const index = timeFrame === 'day' ? row.hour : 
-                   timeFrame === 'week' ? (row.day % 7) : 
+                   timeFrame === 'week' ? (row.day - 1) : 
                    timeFrame === 'month' ? (row.day - 1) : 
                    (row.month - 1);
       if (index >= 0 && index < data.length) {
@@ -3569,46 +3563,47 @@ app.get('/api/analytics/time', async (req, res) => {
   }
 });
 
-// Reports by Type
+// Reports by Type - FIXED VERSION
 app.get('/api/analytics/type', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     
     const query = `
-      SELECT emergencyType, COUNT(*) AS count
+      SELECT 
+        CASE 
+          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster') 
+            THEN emergencyType
+          ELSE 'Other'
+        END AS type,
+        COUNT(*) AS count
       FROM Report
-      GROUP BY emergencyType
+      GROUP BY 
+        CASE 
+          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster') 
+            THEN emergencyType
+          ELSE 'Other'
+        END
     `;
     
     const result = await pool.request().query(query);
     
-    // Map and order the types
-    const typeMap = {
-      'Crime': 'Crime',
-      'Medical': 'Medical',
-      'Fire': 'Fire',
-      'Natural Disaster': 'Natural Disaster',
-      'Community': 'Other'
-    };
+    // Define required types in specific order
+    const requiredTypes = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'Other'];
+    const typeCounts = {};
     
-    // Initialize counts for all types
-    const counts = {
-      'Crime': 0,
-      'Medical': 0,
-      'Fire': 0,
-      'Natural Disaster': 0,
-      'Other': 0
-    };
-    
-    // Fill counts from database
-    result.recordset.forEach(row => {
-      const type = typeMap[row.emergencyType] || 'Other';
-      counts[type] = (counts[type] || 0) + row.count;
+    // Initialize with zeros
+    requiredTypes.forEach(type => {
+      typeCounts[type] = 0;
     });
     
-    // Convert to arrays in the desired order
-    const labels = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'Other'];
-    const data = labels.map(label => counts[label]);
+    // Fill with actual counts
+    result.recordset.forEach(row => {
+      typeCounts[row.type] = row.count;
+    });
+    
+    // Convert to arrays
+    const labels = requiredTypes;
+    const data = labels.map(type => typeCounts[type]);
     
     res.json({ labels, data });
   } catch (err) {
