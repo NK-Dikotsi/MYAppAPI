@@ -1229,7 +1229,8 @@ app.get('/api/messages', requireAuth, async (req, res) => {
         FROM Messages m
         JOIN Users u ON m.SenderID = u.UserID
         LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
-        WHERE m.ChannelID = @ChannelID
+        WHERE m.ChannelID = @ChannelID 
+        AND m.isActive = 'Yes'
         ORDER BY m.SentAt ASC
       `);
 
@@ -1353,6 +1354,7 @@ app.get('/api/messages/unread-count', requireAuth, async (req, res) => {
                 WHERE m.ChannelID = @ChannelID
                 AND m.SenderID != @UserID  -- Only count messages from others
                 AND r.MessageID IS NULL    -- Only count unread messages
+                AND m.isActive = 'Yes'
             `);
 
     res.status(200).json({
@@ -1432,7 +1434,7 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
         FROM Messages m
         JOIN Users u ON m.SenderID = u.UserID
         LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
-        WHERE m.MessageID > @LastMessageID AND m.ChannelID = @ChannelID
+        WHERE m.MessageID > @LastMessageID AND m.ChannelID = @ChannelID AND m.isActive = 'Yes'
         ORDER BY m.SentAt ASC
       `);
 
