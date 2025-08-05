@@ -586,7 +586,7 @@ app.post('/addReport', async (req, res) => {
                 (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status, dateReported)
                 OUTPUT INSERTED.ReportID
                 VALUES
-                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus,GETDATE())
+                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus,dbo.GetSASTDateTime())
             `);
 
     const insertedReportID = result.recordset[0].ReportID;
@@ -1253,7 +1253,7 @@ app.get('/api/messages', requireAuth, async (req, res) => {
               )
               BEGIN
                 INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
-                VALUES (@MessageID, @UserID, GETDATE())
+                VALUES (@MessageID, @UserID, dbo.GetSASTDateTime())
               END
             `)
         )
@@ -1317,7 +1317,7 @@ app.post('/api/messages/read', requireAuth, async (req, res) => {
       .input('UserID', sql.Int, userId)
       .query(`
                 INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
-                VALUES (@MessageID, @UserID, GETDATE())
+                VALUES (@MessageID, @UserID, dbo.GetSASTDateTime())
             `);
 
     res.status(200).json({
@@ -1456,7 +1456,7 @@ app.get('/api/messages/latest', requireAuth, async (req, res) => {
               )
               BEGIN
                 INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
-                VALUES (@MessageID, @UserID, GETDATE())
+                VALUES (@MessageID, @UserID, dbo.GetSASTDateTime())
               END
             `)
         )
@@ -1768,7 +1768,7 @@ app.post('/api/trust-requests/respond', requireAuth, async (req, res) => {
       .input('Status', sql.VarChar(20), newStatus)
       .query(`
         UPDATE TrustRequests 
-        SET Status = @Status, RespondedAt = GETDATE()
+        SET Status = @Status, RespondedAt = dbo.GetSASTDateTime()
         WHERE RequestID = @RequestID
       `);
 
@@ -2044,7 +2044,7 @@ app.post('/api/trust-requests/respond', requireAuth, async (req, res) => {
       .input('Status', sql.VarChar(20), newStatus)
       .query(`
         UPDATE TrustRequests 
-        SET Status = @Status, RespondedAt = GETDATE()
+        SET Status = @Status, RespondedAt = dbo.GetSASTDateTime()
         WHERE RequestID = @RequestID
       `);
 
@@ -2389,7 +2389,7 @@ app.post('/group/sendMessage', async (req, res) => {
       .input('reportID', sql.Int, reportID)
       .query(`
         INSERT INTO [dbo].[groupMessage] (userID, msg, reportID, timeSent)
-        VALUES (@userID, @msg, @reportID, GETDATE())
+        VALUES (@userID, @msg, @reportID, dbo.GetSASTDateTime())
       `);
 
     res.status(201).json({ message: 'Message sent successfully' });
@@ -2833,7 +2833,7 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
       .query(`
         INSERT INTO Messages (ChannelID, SenderID, Content, images64, SentAt)
         OUTPUT INSERTED.MessageID, INSERTED.SentAt, INSERTED.images64
-        VALUES (@ChannelID, @SenderID, @Content, @Images64, GETDATE())
+        VALUES (@ChannelID, @SenderID, @Content, @Images64, dbo.GetSASTDateTime())
       `);
 
     if (result.recordset.length === 0) {
@@ -3019,7 +3019,7 @@ app.post('/api/messages/:UserID/mark-all-read', async (req, res) => {
       .input('ChannelID', sql.Int, channelId)
       .query(`
         INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
-        SELECT m.MessageID, @UserID, GETDATE()
+        SELECT m.MessageID, @UserID, dbo.GetSASTDateTime()
         FROM Messages m
         LEFT JOIN MessageReadStatus r ON m.MessageID = r.MessageID AND r.UserID = @UserID
         WHERE m.ChannelID = @ChannelID
@@ -3077,7 +3077,7 @@ app.post('/api/messages/:UserID/read', async (req, res) => {
       .input('UserID', sql.Int, userId)
       .query(`
                 INSERT INTO MessageReadStatus (MessageID, UserID, ReadAt)
-                VALUES (@MessageID, @UserID, GETDATE())
+                VALUES (@MessageID, @UserID, dbo.GetSASTDateTime())
             `);
 
     res.status(200).json({
@@ -3155,7 +3155,7 @@ app.get('/api/volunteers', async (req, res) => {
             SELECT 1 FROM Sleep 
             WHERE UserID = u.UserID 
             AND OnBreak = 'Yes' 
-            AND (Duration IS NULL OR Duration > GETDATE())
+            AND (Duration IS NULL OR Duration > dbo.GetSASTDateTime())
           ) THEN 0 
           ELSE 1 
         END AS isActive
@@ -3528,7 +3528,7 @@ app.get('/getReportsadmin', async (req, res) => {
         Report_Status,
         dateReported
       FROM Report
-      WHERE CAST(dateReported AS DATE) = CAST(GETDATE() AS DATE)
+      WHERE CAST(dateReported AS DATE) = CAST(dbo.GetSASTDateTime() AS DATE)
     `);
 
     const reports = result.recordset;
@@ -3569,10 +3569,10 @@ function getDateRange(timeFrame) {
   
   switch(timeFrame) {
     case 'day':
-      start.setDate(now.getDate() - 1);
+      start.setDate(now.dbo.GetSASTDateTime() - 1);
       break;
     case 'week':
-      start.setDate(now.getDate() - 7);
+      start.setDate(now.dbo.GetSASTDateTime() - 7);
       break;
     case 'month':
       start.setMonth(now.getMonth() - 1);
