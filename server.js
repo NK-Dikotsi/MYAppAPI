@@ -3473,7 +3473,7 @@ app.get('/getReportsByUser', async (req, res) => {
       .input('UserID', sql.Int, userID)
       .query(`
         SELECT ReportID, EmergencyType, EmerDescription, Report_Location, Report_Status, CreatedAt
-        FROM Report
+        FROM [dbo].[Report]
         WHERE ReporterID = @UserID
         ORDER BY CreatedAt DESC
       `);
