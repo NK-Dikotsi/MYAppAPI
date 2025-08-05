@@ -2936,7 +2936,7 @@ app.get('/api/channels/:channelId/messages/disabled', async (req, res) => {
         FROM Messages m
         JOIN Users u ON m.SenderID = u.UserID
         WHERE m.ChannelID = @ChannelID
-          AND m.isActive = 0  // Only inactive messages
+          AND m.isActive = 'No'
         ORDER BY m.SentAt DESC
       `);
     
@@ -2976,7 +2976,7 @@ app.patch('/api/messages/:messageId/disable', async (req, res) => {
     
     await pool.request()
       .input('MessageID', sql.Int, messageId)
-      .query('UPDATE Messages SET isActive = "No" WHERE MessageID = @MessageID');
+      .query('UPDATE Messages SET isActive = \'No\' WHERE MessageID = @MessageID');
     
     res.status(200).json({ success: true });
   } catch (err) {
@@ -2992,7 +2992,7 @@ app.patch('/api/messages/:messageId/restore', async (req, res) => {
     
     await pool.request()
       .input('MessageID', sql.Int, messageId)
-      .query('UPDATE Messages SET isActive = "Yes" WHERE MessageID = @MessageID');
+      .query('UPDATE Messages SET isActive = \'Yes\' WHERE MessageID = @MessageID');
     
     res.status(200).json({ success: true });
   } catch (err) {
