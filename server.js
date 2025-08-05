@@ -3459,6 +3459,33 @@ app.get('/getReportsByType', async (req, res) => {
     res.status(500).json({ success: false, error: 'Database error' });
   }
 });
+//
+app.get('/getReportsByUser', async (req, res) => {
+  const userID = parseInt(req.query.userID);
+
+  if (!userID || isNaN(userID)) {
+    return res.status(400).json({ success: false, error: 'Invalid or missing userID' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('UserID', sql.Int, userID)
+      .query(`
+        SELECT ReportID, EmergencyType, EmerDescription, Report_Location, Report_Status, CreatedAt
+        FROM Report
+        WHERE UserID = @UserID
+        ORDER BY CreatedAt DESC
+      `);
+
+    const reports = result.recordset;
+
+    res.status(200).json({ success: true, count: reports.length, reports });
+  } catch (error) {
+    console.error('Error fetching reports by user:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching reports' });
+  }
+});
 
 
 app.get('/getReportsadmin', async (req, res) => {
