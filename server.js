@@ -2885,6 +2885,7 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
         FROM Messages m
         JOIN Users u ON m.SenderID = u.UserID
         WHERE m.ChannelID = @ChannelID
+        AND m.isActive = 'Yes'
         ORDER BY m.SentAt DESC
       `);
 
@@ -2913,6 +2914,89 @@ app.get('/api/channels/:channelId/messages', async (req, res) => {
       error: 'Internal server error',
       details: err.message
     });
+  }
+});
+
+// GET disabled messages
+app.get('/api/channels/:channelId/messages/disabled', async (req, res) => {
+  try {
+    const channelId = parseInt(req.params.channelId, 10);
+    const pool = await sql.connect(config);
+    
+    const result = await pool.request()
+      .input('ChannelID', sql.Int, channelId)
+      .query(`
+        SELECT TOP 50 
+          m.MessageID, 
+          m.SenderID, 
+          u.FullName AS SenderName, 
+          m.Content, 
+          COALESCE(m.images64, '') AS images64,  
+          m.SentAt
+        FROM Messages m
+        JOIN Users u ON m.SenderID = u.UserID
+        WHERE m.ChannelID = @ChannelID
+          AND m.isActive = 0  // Only inactive messages
+        ORDER BY m.SentAt DESC
+      `);
+    
+    res.json({
+      messages: result.recordset.map(msg => {
+        // Handle image conversion safely
+        let imagesArray = [];
+        try {
+          if (msg.images64 && msg.images64.trim() !== '') {
+            imagesArray = msg.images64.split(';').filter(Boolean);
+          }
+        } catch (e) {
+          console.error('Error parsing images:', e);
+        }
+
+        return {
+          ...msg,
+          images64: imagesArray,
+          SentAt: new Date(msg.SentAt).toISOString()
+        };
+      })
+    });
+  } catch (err) {
+    console.error('Error fetching messages:', err);
+    res.status(500).json({
+      error: 'Internal server error',
+      details: err.message
+    });
+  }
+});
+
+// Disable message endpoint
+app.patch('/api/messages/:messageId/disable', async (req, res) => {
+  try {
+    const messageId = parseInt(req.params.messageId, 10);
+    const pool = await sql.connect(config);
+    
+    await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .query('UPDATE Messages SET isActive = "No" WHERE MessageID = @MessageID');
+    
+    res.status(200).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to disable message' });
+  }
+});
+
+// Restore message endpoint
+app.patch('/api/messages/:messageId/restore', async (req, res) => {
+  try {
+    const messageId = parseInt(req.params.messageId, 10);
+    const pool = await sql.connect(config);
+    
+    await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .query('UPDATE Messages SET isActive = "Yes" WHERE MessageID = @MessageID');
+    
+    res.status(200).json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to restore message' });
   }
 });
 
