@@ -3474,7 +3474,7 @@ app.get('/getReportsByUser', async (req, res) => {
       .query(`
         SELECT ReportID, EmergencyType, EmerDescription, Report_Location, Report_Status, CreatedAt
         FROM Report
-        WHERE UserID = @UserID
+        WHERE ReporterID = @UserID
         ORDER BY CreatedAt DESC
       `);
 
