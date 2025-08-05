@@ -363,12 +363,12 @@ app.post('/register', async (req, res) => {
   const { fullName, email, password, phoneNumber, role, dob, homeAddress, imageBase64, gender } = req.body;
   const Username = email.split("@")[0];
   const userType = 'CommunityMember';
-  console.log('data: ', req.body);
-
+  const acceptedTerms = 'Yes'; // Assuming they accept terms during registration
 
   try {
     const pool = await sql.connect(config);
-    //insert user first
+    
+    // Insert user with SAST timestamp
     const usersResult = await pool.request()
       .input('FullName', sql.VarChar, fullName)
       .input('Email', sql.VarChar, email)
@@ -376,37 +376,48 @@ app.post('/register', async (req, res) => {
       .input('PhoneNumber', sql.VarChar, phoneNumber)
       .input('Passcode', sql.VarChar, password)
       .input('UserType', sql.VarChar, userType)
-      .input('CreatedAt', sql.DateTime, new Date())
       .input('ProfilePhoto', sql.VarChar, imageBase64)
-      .input('AcceptedTerms', sql.VarChar, 'No')
-      .input('Gender', sql.VarChar, gender)
+      .input('AcceptedTerms', sql.VarChar, acceptedTerms)
+      .input('Gender', sql.VarChar, gender || 'Prefer not to say')
       .query(`
-           INSERT INTO [dbo].[Users]
-           (FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto, AcceptedTerms, Gender)
-           OUTPUT INSERTED.UserID
-           VALUES
-           (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, @CreatedAt, @ProfilePhoto, @AcceptedTerms, @Gender)
-            `);
+        INSERT INTO [dbo].[Users]
+        (FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto, AcceptedTerms, Gender)
+        OUTPUT INSERTED.UserID
+        VALUES
+        (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, 
+         dbo.GetSASTDateTime(), @ProfilePhoto, @AcceptedTerms, @Gender)
+      `);
 
     const userID = usersResult.recordset[0].UserID;
+
     if (userType === 'CommunityMember') {
       await pool.request()
-        .input('UserID', sql.BigInt, userID)
+        .input('UserID', sql.Int, userID)
         .input('Role', sql.VarChar, role)
         .input('DOB', sql.Date, dob)
         .input('HomeAddress', sql.VarChar, homeAddress)
-        .input('TrustedContacts', sql.VarChar, '0')
+        .input('TrustedContacts', sql.VarChar, '0') // Initialize with 0 trusted contacts
         .query(`
-                    INSERT INTO [dbo].[CommunityMember]
-                    (UserID, Role, DOB, HomeAddress, TrustedContacts)
-                    VALUES
-                    (@UserID, @Role, @DOB, @HomeAddress, @TrustedContacts) 
-                    `);
+          INSERT INTO [dbo].[CommunityMember]
+          (UserID, Role, DOB, HomeAddress, TrustedContacts)
+          VALUES
+          (@UserID, @Role, @DOB, @HomeAddress, @TrustedContacts) 
+        `);
     }
-    res.status(201).json({ message: 'User registered successfully.' });
+
+    res.status(201).json({ 
+      message: 'User registered successfully.',
+      userID: userID
+    });
   }
   catch (err) {
     console.error('Registration error:', err);
+    
+    // More specific error handling
+    if (err.number === 2627) { // SQL Server duplicate key error
+      return res.status(409).json({ message: 'Email already exists.' });
+    }
+    
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
@@ -658,7 +669,6 @@ app.post('/addNotification', async (req, res) => {
           .input('notiTitle', sql.VarChar, notiTitle)
           .input('msg', sql.VarChar, msg)
           .input('readStatus', sql.VarChar, readStatus)
-          .input('createdDate', sql.DateTime, new Date())
           .input('userId', sql.BigInt, userId)
           .input('reportID', sql.BigInt, reportid)
           .query(`
@@ -666,7 +676,7 @@ app.post('/addNotification', async (req, res) => {
                         (notiTitle, msg, readStatus, createdDate, reportID, userId)
                         OUTPUT INSERTED.notificationID
                         VALUES
-                        (@notiTitle, @msg, @readStatus, @createdDate, @reportID, @userId)
+                        (@notiTitle, @msg, @readStatus, dbo.GetSASTDateTime(), @reportID, @userId)
                     `);
 
         console.log("Notification added for UserID", userId, "-> ID:", result.recordset[0].notificationID);
@@ -1033,13 +1043,12 @@ app.post('/addMessage', async (req, res) => {
       .input('reporterID', sql.Int, ReporterId)
       .input('responderID', sql.Int, ResponderId)
       .input('reportID', sql.Int, ReportId)
-      .input('timeSent', sql.DateTime, new Date())
       .input('msg', sql.VarChar(sql.MAX), msg) // use max length for msg
       .query(`
                 INSERT INTO [dbo].[chatMessage] 
                 (reporterID, responderID, reportID, timeSent, msg)
                 OUTPUT INSERTED.msgID
-                VALUES (@reporterID, @responderID, @reportID, @timeSent, @msg)
+                VALUES (@reporterID, @responderID, @reportID, dbo.GetSASTDateTime(), @msg)
             `);
 
     res.status(201).json({ msgID: result.recordset[0].msgID });
@@ -1311,7 +1320,7 @@ app.post('/api/messages/read', requireAuth, async (req, res) => {
       });
     }
 
-    // Insert with current timestamp
+    // Insert with SAST timestamp
     await pool.request()
       .input('MessageID', sql.Int, messageId)
       .input('UserID', sql.Int, userId)
@@ -1320,9 +1329,14 @@ app.post('/api/messages/read', requireAuth, async (req, res) => {
                 VALUES (@MessageID, @UserID, dbo.GetSASTDateTime())
             `);
 
+    // Get the SAST timestamp for the response
+    const sastTimeResult = await pool.request()
+      .query('SELECT dbo.GetSASTDateTime() AS sastTime');
+    const readAt = sastTimeResult.recordset[0].sastTime;
+
     res.status(200).json({
       success: true,
-      readAt: new Date().toISOString()
+      readAt: readAt.toISOString()
     });
 
   } catch (err) {
@@ -1334,7 +1348,6 @@ app.post('/api/messages/read', requireAuth, async (req, res) => {
     });
   }
 });
-
 
 // GET /api/messages/unread-count
 app.get('/api/messages/unread-count', requireAuth, async (req, res) => {
@@ -1717,11 +1730,18 @@ app.get('/api/trust-requests/pending', requireAuth, async (req, res) => {
     });
 
   } catch (err) {
+    // Get SAST timestamp for error logging
+    const sastTime = await sql.connect(config)
+      .then(pool => pool.request().query('SELECT dbo.GetSASTDateTime() as sastTime'))
+      .then(result => result.recordset[0].sastTime)
+      .catch(() => new Date()); // Fallback to regular date if SAST time fails
+
     console.error('Error in pending requests:', {
       error: err.message,
       userId: userId,
-      time: new Date().toISOString()
+      time: sastTime.toISOString()
     });
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch requests',
@@ -1729,6 +1749,7 @@ app.get('/api/trust-requests/pending', requireAuth, async (req, res) => {
     });
   }
 });
+
 app.post('/api/trust-requests/respond', requireAuth, async (req, res) => {
   const { requestId, accept } = req.body;
   const userId = req.session.user.id;
@@ -2525,7 +2546,6 @@ app.post('/register-admin', async (req, res) => {
       .input('PhoneNumber', sql.VarChar, phoneNumber)
       .input('Passcode', sql.VarChar, plainPassword)
       .input('UserType', sql.VarChar, userType)
-      .input('CreatedAt', sql.DateTime, new Date())
       .input('ProfilePhoto', sql.VarChar, imageBase64)
       .input('AcceptedTerms', sql.VarChar, acceptedTerms)
       .query(`
@@ -2533,7 +2553,7 @@ app.post('/register-admin', async (req, res) => {
         (FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto, AcceptedTerms)
         OUTPUT INSERTED.UserID
         VALUES
-        (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, @CreatedAt, @ProfilePhoto, @AcceptedTerms)
+        (@FullName, @Email, @Username, @PhoneNumber, @Passcode, @UserType, dbo.GetSASTDateTime(), @ProfilePhoto, @AcceptedTerms)
       `);
 
     const userID = usersResult.recordset[0].UserID;
@@ -2555,7 +2575,6 @@ app.post('/register-admin', async (req, res) => {
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
-
 //admin login
 app.post('/login-admin', async (req, res) => {
   const { email, password } = req.body;
@@ -2829,7 +2848,7 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
       .input('ChannelID', sql.Int, channelId)
       .input('SenderID', sql.Int, senderId)
       .input('Content', sql.VarChar, content)
-      .input('Images64', sql.NVarChar(sql.MAX), imagesString) // Add images64 input
+      .input('Images64', sql.NVarChar(sql.MAX), imagesString)
       .query(`
         INSERT INTO Messages (ChannelID, SenderID, Content, images64, SentAt)
         OUTPUT INSERTED.MessageID, INSERTED.SentAt, INSERTED.images64
@@ -2849,13 +2868,18 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
     const storedImages = result.recordset[0].images64 || '';
     const imagesArray = storedImages ? storedImages.split(';') : [];
 
+    // Get SAST timestamp for response
+    const sastTimeResult = await pool.request()
+      .query('SELECT dbo.GetSASTDateTime() AS sastTime');
+    const sentAt = sastTimeResult.recordset[0].sastTime;
+
     const newMessage = {
       MessageID: result.recordset[0].MessageID,
       SenderID: senderId,
       SenderName: senderResult.recordset[0].FullName,
       Content: content,
-      images64: imagesArray, // Array of base64 strings (empty if no images)
-      SentAt: new Date(result.recordset[0].SentAt).toISOString()
+      images64: imagesArray,
+      SentAt: sentAt.toISOString()
     };
 
     res.status(201).json(newMessage);
