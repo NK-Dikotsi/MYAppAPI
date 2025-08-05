@@ -3447,7 +3447,7 @@ app.get('/getReportsByType', async (req, res) => {
     const pool = await sql.connect(config);
     const result = await pool.query(`
       SELECT * FROM [dbo].[Report]
-      WHERE EmergencyType = @type
+      WHERE emergencyType = @type
     `);
 
     const request = pool.request();
@@ -3455,7 +3455,7 @@ app.get('/getReportsByType', async (req, res) => {
 
     const filteredResult = await request.query(`
       SELECT * FROM [dbo].[Report]
-      WHERE EmergencyType = @type
+      WHERE emergencyType = @type
     `);
 
     res.status(200).json({ success: true, Reports: filteredResult.recordset });
