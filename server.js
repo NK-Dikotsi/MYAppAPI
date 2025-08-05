@@ -3461,29 +3461,54 @@ app.get('/getReportsByType', async (req, res) => {
 });
 //
 app.get('/getReportsByUser', async (req, res) => {
-  const userID = parseInt(req.query.userID);
+  const { userID } = req.query;
 
   if (!userID || isNaN(userID)) {
-    return res.status(400).json({ success: false, error: 'Invalid or missing userID' });
+    return res.status(400).json({
+      success: false,
+      message: 'Valid userID is required',
+    });
   }
 
   try {
     const pool = await sql.connect(config);
+
     const result = await pool.request()
       .input('UserID', sql.Int, userID)
       .query(`
-        SELECT ReportID, EmergencyType, EmerDescription, Report_Location, Report_Status, CreatedAt
-        FROM [dbo].[Report]
+        SELECT 
+          ReportID, 
+          emergencyType, 
+          emerDescription, 
+          Report_Location, 
+          Report_Status, 
+          dateReported
+        FROM Report
         WHERE ReporterID = @UserID
-        ORDER BY CreatedAt DESC
+        ORDER BY dateReported DESC
       `);
 
     const reports = result.recordset;
 
-    res.status(200).json({ success: true, count: reports.length, reports });
+    if (reports.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No reports found for this user',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      count: reports.length,
+      reports,
+    });
+
   } catch (error) {
-    console.error('Error fetching reports by user:', error);
-    res.status(500).json({ success: false, error: 'Server error fetching reports' });
+    console.error("Error fetching reports by user:", error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
   }
 });
 
