@@ -3837,19 +3837,19 @@ app.get('/api/analytics/funnel', async (req, res) => {
          
         (SELECT COUNT(*) FROM Report 
          WHERE Report_Status = 'Escalated'
-         AND dateReported BETWEEN '${start}' AND '${end}') AS escalated
+         AND dateReported BETWEEN '${start}' AND '${end}') AS escalated,
 
          (SELECT COUNT(*) FROM Report 
          WHERE Report_Status = 'On-going'
-         AND dateReported BETWEEN '${start}' AND '${end}') AS ongoing
+         AND dateReported BETWEEN '${start}' AND '${end}') AS ongoing,
 
          (SELECT COUNT(*) FROM Report 
          WHERE Report_Status = 'Abandoned'
-         AND dateReported BETWEEN '${start}' AND '${end}') AS abandoned
+         AND dateReported BETWEEN '${start}' AND '${end}') AS abandoned,
 
          (SELECT COUNT(*) FROM Report 
          WHERE Report_Status = 'False report'
-         AND dateReported BETWEEN '${start}' AND '${end}') AS false
+         AND dateReported BETWEEN '${start}' AND '${end}') AS falseReport
     `;
     
     const result = await pool.request().query(query);
@@ -3861,7 +3861,7 @@ app.get('/api/analytics/funnel', async (req, res) => {
       resolved: row.resolved || 0,
       ongoing: row.ongoing || 0,
       abandoned: row.abandoned || 0,
-      false: row.false || 0,
+      false: row.falseReport || 0,
       escalated: row.escalated || 0
     });
   } catch (err) {
