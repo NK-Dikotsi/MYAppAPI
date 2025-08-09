@@ -3742,7 +3742,7 @@ app.get('/api/analytics/type', async (req, res) => {
     const query = `
       SELECT 
         CASE 
-          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster') 
+          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS') 
             THEN emergencyType
           ELSE 'Other'
         END AS type,
@@ -3750,7 +3750,7 @@ app.get('/api/analytics/type', async (req, res) => {
       FROM Report
       GROUP BY 
         CASE 
-          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster') 
+          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS') 
             THEN emergencyType
           ELSE 'Other'
         END
@@ -3759,7 +3759,7 @@ app.get('/api/analytics/type', async (req, res) => {
     const result = await pool.request().query(query);
     
     // Define required types in specific order
-    const requiredTypes = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'Other'];
+    const requiredTypes = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS', 'Other'];
     const typeCounts = {};
     
     // Initialize with zeros
@@ -3838,6 +3838,14 @@ app.get('/api/analytics/funnel', async (req, res) => {
         (SELECT COUNT(*) FROM Report 
          WHERE Report_Status = 'Escalated'
          AND dateReported BETWEEN '${start}' AND '${end}') AS escalated
+
+         (SELECT COUNT(*) FROM Report 
+         WHERE Report_Status NOT IN ('Completed', 'Escalated')
+           AND ReportID IN (
+             SELECT DISTINCT reportID 
+             FROM Response
+           )
+           AND dateReported BETWEEN '${start}' AND '${end}') AS unresolved
     `;
     
     const result = await pool.request().query(query);
@@ -3847,6 +3855,7 @@ app.get('/api/analytics/funnel', async (req, res) => {
       logged: row.logged || 0,
       accepted: row.accepted || 0,
       resolved: row.resolved || 0,
+      unresolved: row.unresolved || 0,
       escalated: row.escalated || 0
     });
   } catch (err) {
