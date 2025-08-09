@@ -3861,7 +3861,7 @@ app.get('/api/analytics/funnel', async (req, res) => {
       resolved: row.resolved || 0,
       ongoing: row.ongoing || 0,
       abandoned: row.abandoned || 0,
-      false: row.falseReport || 0,
+      falseReport: row.falseReport || 0,
       escalated: row.escalated || 0
     });
   } catch (err) {
