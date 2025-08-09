@@ -327,9 +327,9 @@ app.use(session({
 }));
 
 
-// SQL Server Configuration
+// SQL Server Configuration - New Config
 const config = {
-  server: process.env.DB_SERVER || 'siza-server-123.database.windows.net',
+  server: process.env.DB_SERVER || 'siza-server123.database.windows.net',
   user: process.env.DB_USER || 'sizaadmin',
   password: process.env.DB_PASSWORD || 'YourPassword123!',
   database: 'SIZA',
