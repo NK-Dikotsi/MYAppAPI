@@ -1253,6 +1253,49 @@ app.post('/api/messages', requireAuth, async (req, res) => {
       }
     });
 
+    // 4. Background notification for community leaders
+    setImmediate(async () => {
+      try {
+        const broadcastPool = await sql.connect(config);
+        const messageId = result.recordset[0].MessageID;
+        
+        // Get community leaders
+        const leaders = await broadcastPool.request()
+          .query("SELECT UserID FROM CommunityMember WHERE Role = 'Community Leader'");
+        
+        if (leaders.recordset.length > 0) {
+          // Create notification
+          const notifResult = await broadcastPool.request()
+            .input('NotificationType', sql.VarChar(50), 'BROADCAST')
+            .input('EntityType', sql.VarChar(50), 'MESSAGE')
+            .input('EntityID', sql.Int, messageId)
+            .input('Title', sql.VarChar(255), 'New Broadcast Alert')
+            .input('Message', sql.VarChar(sql.MAX), `New emergency alert: ${content.substring(0, 100)}...`)
+            .query(`
+              INSERT INTO Notifications 
+              (NotificationType, EntityType, EntityID, Title, Message)
+              OUTPUT INSERTED.NotificationID
+              VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
+            `);
+          
+          const notificationId = notifResult.recordset[0].NotificationID;
+          
+          // Add recipients
+          const values = leaders.recordset.map(leader => 
+            `(${notificationId}, ${leader.UserID})`
+          ).join(',');
+          
+          await broadcastPool.request().query(`
+            INSERT INTO NotificationRecipients (NotificationID, UserID)
+            VALUES ${values}
+          `);
+        }
+        await broadcastPool.close();
+      } catch (err) {
+        console.error('Error in broadcast notification:', err);
+      }
+    });
+
     // Perform content analysis in background - DON'T BLOCK THE RESPONSE
     // Use setImmediate to ensure this runs after the response is sent
     setImmediate(async () => {
@@ -1280,6 +1323,43 @@ app.post('/api/messages', requireAuth, async (req, res) => {
               INSERT INTO FlaggedMessages (MessageID, UserID, Reason)
               VALUES (@MessageID, @UserID, @Reason)
             `);
+
+            // C. Create notification for admins
+          try {
+            // Get all Leaders
+            const admins = await backgroundPool.request()
+              .query("SELECT UserID FROM Users WHERE UserType = 'CommunityLeader'");
+            
+            if (admins.recordset.length > 0) {
+              // Create notification
+              const notifResult = await backgroundPool.request()
+                .input('NotificationType', sql.VarChar(50), 'MESSAGE_FLAGGED')
+                .input('EntityType', sql.VarChar(50), 'MESSAGE')
+                .input('EntityID', sql.Int, result.recordset[0].MessageID)
+                .input('Title', sql.VarChar(255), 'Message Flagged')
+                .input('Message', sql.VarChar(sql.MAX), `Message flagged: ${reasons.substring(0, 200)}`)
+                .query(`
+                  INSERT INTO Notifications 
+                  (NotificationType, EntityType, EntityID, Title, Message)
+                  OUTPUT INSERTED.NotificationID
+                  VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
+                `);
+              
+              const notificationId = notifResult.recordset[0].NotificationID;
+              
+              // Add recipients
+              const values = admins.recordset.map(admin => 
+                `(${notificationId}, ${admin.UserID})`
+              ).join(',');
+              
+              await backgroundPool.request().query(`
+                INSERT INTO NotificationRecipients (NotificationID, UserID)
+                VALUES ${values}
+              `);
+            }
+          } catch (notifErr) {
+            console.error('Failed to create flag notification:', notifErr);
+          }
 
           console.log(`Message ${result.recordset[0].MessageID} flagged (score: ${totalScore}): ${reasons}`);
 
@@ -2970,6 +3050,49 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
     };
 
     res.status(201).json(newMessage);
+
+    // 6. Background notification for community leaders
+    setImmediate(async () => {
+      try {
+        const bgPool = await sql.connect(config);
+        
+        // Get community leaders
+        const leaders = await bgPool.request()
+          .query("SELECT UserID FROM CommunityMember WHERE Role = 'Community Leader'");
+        
+        if (leaders.recordset.length > 0) {
+          // Create notification
+          const notifResult = await bgPool.request()
+            .input('NotificationType', sql.VarChar(50), 'BROADCAST')
+            .input('EntityType', sql.VarChar(50), 'MESSAGE')
+            .input('EntityID', sql.Int, newMessage.MessageID)
+            .input('Title', sql.VarChar(255), 'New Broadcast Alert')
+            .input('Message', sql.VarChar(sql.MAX), `New emergency alert: ${content.substring(0, 100)}...`)
+            .query(`
+              INSERT INTO Notifications 
+              (NotificationType, EntityType, EntityID, Title, Message)
+              OUTPUT INSERTED.NotificationID
+              VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
+            `);
+          
+          const notificationId = notifResult.recordset[0].NotificationID;
+          
+          // Add recipients
+          const values = leaders.recordset.map(leader => 
+            `(${notificationId}, ${leader.UserID})`
+          ).join(',');
+          
+          await bgPool.request().query(`
+            INSERT INTO NotificationRecipients (NotificationID, UserID)
+            VALUES ${values}
+          `);
+        }
+        await bgPool.close();
+      } catch (err) {
+        console.error('Background task: Failed to create broadcast notification:', err);
+      }
+    });
+    
   } catch (err) {
     console.error('Error sending message:', err);
     res.status(500).json({ error: 'Failed to send message' });
@@ -3669,6 +3792,116 @@ app.get('/getReportsadmin', async (req, res) => {
     });
   }
 });
+//******************NOTIFICATIONS ENDPOINTS ADMIN********************//
+// Create notification content
+const createNotification = async (type, entityType, entityId, title, message, metadata = null) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('NotificationType', sql.VarChar(50), type)
+      .input('EntityType', sql.VarChar(50), entityType)
+      .input('EntityID', sql.Int, entityId)
+      .input('Title', sql.VarChar(255), title)
+      .input('Message', sql.VarChar(sql.MAX), message)
+      .input('Metadata', sql.VarChar(sql.MAX), metadata)
+      .query(`
+        INSERT INTO Notifications 
+        (NotificationType, EntityType, EntityID, Title, Message, Metadata)
+        OUTPUT INSERTED.NotificationID
+        VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message, @Metadata)
+      `);
+    return result.recordset[0].NotificationID;
+  } catch (err) {
+    console.error('Error creating notification:', err);
+    throw err;
+  }
+};
+
+// Add recipients to notification
+const addNotificationRecipients = async (notificationId, userIds) => {
+  if (userIds.length === 0) return;
+  
+  try {
+    const pool = await sql.connect(config);
+    const request = pool.request();
+    
+    // Build dynamic query
+    let query = `
+      INSERT INTO NotificationRecipients (NotificationID, UserID, IsRead)
+      VALUES 
+    `;
+    
+    const values = [];
+    userIds.forEach((userId, index) => {
+      values.push(`(@NotificationID, @UserID${index}, 0)`);
+      request.input(`UserID${index}`, sql.Int, userId);
+    });
+    
+    query += values.join(',');
+    request.input('NotificationID', sql.Int, notificationId);
+    
+    await request.query(query);
+  } catch (err) {
+    console.error('Error adding recipients:', err);
+    throw err;
+  }
+};
+
+app.get('/api/Leader/notifications', async (req, res) => {
+  const userId = req.user.id; // From authentication middleware
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT 
+          n.NotificationID,
+          n.NotificationType,
+          n.EntityType,
+          n.EntityID,
+          n.Title,
+          n.Message,
+          n.CreatedAt,
+          n.Metadata,
+          nr.IsRead,
+          nr.ReadAt
+        FROM NotificationRecipients nr
+        JOIN Notifications n ON n.NotificationID = nr.NotificationID
+        WHERE nr.UserID = @UserID
+        ORDER BY n.CreatedAt DESC
+      `);
+
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching notifications:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
+  const notificationId = req.params.id;
+  const userId = req.user.id; // From authentication middleware
+
+  try {
+    const pool = await sql.connect(config);
+    await pool.request()
+      .input('NotificationID', sql.Int, notificationId)
+      .input('UserID', sql.Int, userId)
+      .query(`
+        UPDATE NotificationRecipients
+        SET IsRead = 1, ReadAt = GETDATE()
+        WHERE NotificationID = @NotificationID AND UserID = @UserID
+      `);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error marking notification as read:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
 
 
 //******************STATISTICS ENDPOINTS ADMIN********************//
