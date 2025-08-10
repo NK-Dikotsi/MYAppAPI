@@ -1290,6 +1290,14 @@ app.post('/api/messages', requireAuth, async (req, res) => {
             VALUES ${values}
           `);
         }
+        
+      console.log('Broadcast notification data:', {
+        messageId,
+        communityId,
+        leaderCount: leaders.recordset.length,
+        firstLeader: leaders.recordset[0] || 'none'
+      });
+
         await broadcastPool.close();
       } catch (err) {
         console.error('Error in broadcast notification:', err);
@@ -1299,6 +1307,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
     // Perform content analysis in background - DON'T BLOCK THE RESPONSE
     // Use setImmediate to ensure this runs after the response is sent
     setImmediate(async () => {
+      
       try {
         console.log(`Starting background analysis for message ${result.recordset[0].MessageID}`);
 
@@ -1328,7 +1337,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
           try {
             // Get all Leaders
             const admins = await backgroundPool.request()
-              .query("SELECT UserID FROM Users WHERE UserType = 'CommunityLeader'");
+              .query("SELECT UserID FROM CommunityMember WHERE UserType = 'CommunityLeader'");
             
             if (admins.recordset.length > 0) {
               // Create notification
