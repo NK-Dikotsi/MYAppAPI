@@ -671,12 +671,13 @@ app.post('/addNotification', async (req, res) => {
           .input('readStatus', sql.VarChar, readStatus)
           .input('userId', sql.BigInt, userId)
           .input('reportID', sql.BigInt, reportid)
+          .input('NotiType', sql.VarChar, notiType)
           .query(`
                         INSERT INTO [dbo].[Notification]
-                        (notiTitle, msg, readStatus, createdDate, reportID, userId)
+                        (notiTitle, msg, readStatus, createdDate, reportID, userId, NotiType)
                         OUTPUT INSERTED.notificationID
                         VALUES
-                        (@notiTitle, @msg, @readStatus, dbo.GetSASTDateTime(), @reportID, @userId)
+                        (@notiTitle, @msg, @readStatus, dbo.GetSASTDateTime(), @reportID, @userId, @NotiType)
                     `);
 
         console.log("Notification added for UserID", userId, "-> ID:", result.recordset[0].notificationID);
