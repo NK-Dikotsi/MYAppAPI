@@ -3482,9 +3482,9 @@ app.get('/api/flags/counts', async (req, res) => {
   }
 });
 
-// Put a user to sleep with notifications
+// put users to sleep
 app.post('/api/sleep', async (req, res) => {
-  const { userId, durationHours, reason } = req.body;
+  const { userId, durationHours } = req.body;
 
   if (!userId || !durationHours) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -3498,91 +3498,16 @@ app.post('/api/sleep', async (req, res) => {
     const endTime = new Date();
     endTime.setMinutes(endTime.getMinutes() + durationMinutes);
 
-    // Insert Sleep record
     await pool.request()
       .input('UserID', sql.Int, userId)
       .input('OnBreak', sql.VarChar, 'Yes')
       .input('Duration', sql.DateTime, endTime)
-      .input('Reason', sql.VarChar(sql.MAX), reason || 'No reason provided')
       .query(`
-        INSERT INTO Sleep (UserID, OnBreak, Duration, Reason)
-        VALUES (@UserID, @OnBreak, @Duration, @Reason)
+        INSERT INTO Sleep (UserID, OnBreak, Duration)
+        VALUES (@UserID, @OnBreak, @Duration)
       `);
 
-    // ✅ Send success response immediately
-    res.json({ success: true, message: 'User put to sleep. Notifications will be sent shortly.' });
-
-    // ⏩ Notifications run in background
-    setImmediate(async () => {
-      try {
-        // Get user info
-        const userInfo = await pool.request()
-          .input('UserID', sql.Int, userId)
-          .query(`SELECT FullName, Email FROM Users WHERE UserID = @UserID`);
-
-        if (userInfo.recordset.length === 0) return;
-        const { FullName: userFullName, Email: userEmail } = userInfo.recordset[0];
-
-        // 1️⃣ Notification for user
-        const userNotifResult = await pool.request()
-          .input('NotificationType', sql.VarChar(50), 'USER_SLEEP')
-          .input('EntityType', sql.VarChar(50), 'USER')
-          .input('EntityID', sql.Int, userId)
-          .input('Title', sql.VarChar(255), 'Account Suspended')
-          .input('Message', sql.VarChar(sql.MAX),
-            `Your account has been suspended for ${durationHours} hours. ${reason ? `Reason: ${reason}` : ''}`)
-          .query(`
-            INSERT INTO Notifications 
-            (NotificationType, EntityType, EntityID, Title, Message)
-            OUTPUT INSERTED.NotificationID
-            VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
-          `);
-
-        const userNotificationId = userNotifResult.recordset[0].NotificationID;
-
-        await pool.request()
-          .input('NotificationID', sql.Int, userNotificationId)
-          .input('UserID', sql.Int, userId)
-          .query(`
-            INSERT INTO NotificationRecipients (NotificationID, UserID)
-            VALUES (@NotificationID, @UserID)
-          `);
-
-        // 2️⃣ Notification for leaders
-        const leaders = await pool.request()
-          .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
-
-        if (leaders.recordset.length > 0) {
-          const leaderNotifResult = await pool.request()
-            .input('NotificationType', sql.VarChar(50), 'USER_SLEEP_ADMIN')
-            .input('EntityType', sql.VarChar(50), 'USER')
-            .input('EntityID', sql.Int, userId)
-            .input('Title', sql.VarChar(255), 'User Account Suspended')
-            .input('Message', sql.VarChar(sql.MAX),
-              `User ${userFullName} (${userEmail}) has been suspended for ${durationHours} hours. ${reason ? `Reason: ${reason}` : ''}`)
-            .query(`
-              INSERT INTO Notifications 
-              (NotificationType, EntityType, EntityID, Title, Message)
-              OUTPUT INSERTED.NotificationID
-              VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
-            `);
-
-          const leaderNotificationId = leaderNotifResult.recordset[0].NotificationID;
-
-          const values = leaders.recordset.map(leader =>
-            `(${leaderNotificationId}, ${leader.UserID})`
-          ).join(',');
-
-          await pool.request().query(`
-            INSERT INTO NotificationRecipients (NotificationID, UserID)
-            VALUES ${values}
-          `);
-        }
-      } catch (notifyErr) {
-        console.error('Error creating notifications:', notifyErr);
-      }
-    });
-
+    res.json({ success: true });
   } catch (err) {
     console.error('Error putting user to sleep:', err);
     res.status(500).json({ error: 'Internal server error' });
