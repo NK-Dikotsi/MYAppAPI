@@ -1290,7 +1290,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
             VALUES ${values}
           `);
         }
-        
+
       console.log('Broadcast notification data:', {
         messageId,
         communityId,
@@ -3250,7 +3250,7 @@ app.post('/api/messages/:UserID/mark-all-read', async (req, res) => {
   const userId = parseInt(req.params.UserID, 10);
   const channelId = 1; // Melville Emergency Channel
 
-  if (isNaN(UserID)) {
+  if (isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid channelId' });
   }
 
@@ -3282,7 +3282,7 @@ app.post('/api/messages/:UserID/read', async (req, res) => {
   const userId = parseInt(req.params.UserID, 10);
   const { messageId } = req.body;
 
-  if (isNaN(UserID)) {
+  if (isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid channelId' });
   }
 
@@ -3343,7 +3343,7 @@ app.get('/api/messages/:UserID/unread-count', requireAuth, async (req, res) => {
   const userId = parseInt(req.params.UserID, 10);
   const channelId = 1; // Melville Emergency 
 
-  if (isNaN(UserID)) {
+  if (isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid channelId' });
   }
 
@@ -3857,8 +3857,8 @@ const addNotificationRecipients = async (notificationId, userIds) => {
 };
 
 // GET /api/Leader/notifications
-app.get('/api/Leader/notifications', async (req, res) => {
-  const userId = parseInt(req.query.userId); // Get from query param
+app.get('/api/Leader/:userId/notifications', async (req, res) => {
+  const userId = parseInt(req.query.userId, 10); // Get from query param
 
   if (!userId || isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid user ID' });
