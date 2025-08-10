@@ -652,7 +652,7 @@ app.post('/addTrustedContact', async (req, res) => {
 });
 
 app.post('/addNotification', async (req, res) => {
-  const { userIds, notiTitle, msg, readStatus, reportid, reporterID } = req.body;
+  const { userIds, notiTitle, msg, readStatus, reportid, reporterID, notiType } = req.body;
   //console.log('Received user data: ', req.body);
 
   const tokens = userIds.split(' ');
