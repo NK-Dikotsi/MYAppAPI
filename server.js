@@ -1261,7 +1261,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
         
         // Get community leaders
         const leaders = await broadcastPool.request()
-          .query("SELECT UserID FROM CommunityMember WHERE Role = 'Community Leader'");
+          .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
         
         if (leaders.recordset.length > 0) {
           // Create notification
@@ -1324,7 +1324,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
               VALUES (@MessageID, @UserID, @Reason)
             `);
 
-            // C. Create notification for admins
+            // Create notification for admins
           try {
             // Get all Leaders
             const admins = await backgroundPool.request()
@@ -3058,7 +3058,7 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
         
         // Get community leaders
         const leaders = await bgPool.request()
-          .query("SELECT UserID FROM CommunityMember WHERE Role = 'Community Leader'");
+          .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
         
         if (leaders.recordset.length > 0) {
           // Create notification
