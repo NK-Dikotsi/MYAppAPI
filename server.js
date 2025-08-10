@@ -3858,7 +3858,7 @@ const addNotificationRecipients = async (notificationId, userIds) => {
 
 // GET /api/Leader/notifications
 app.get('/api/Leader/:userId/notifications', async (req, res) => {
-  const userId = parseInt(req.query.userId, 10); // Get from query param
+  const userId = parseInt(req.params.userId, 10); // Get from query param
 
   if (!userId || isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid user ID' });
