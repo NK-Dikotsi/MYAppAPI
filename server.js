@@ -3162,15 +3162,60 @@ app.get('/api/channels/:channelId/messages/disabled', async (req, res) => {
   }
 });
 
-// Disable message endpoint
+// Updated disable message endpoint with notification
 app.patch('/api/messages/:messageId/disable', async (req, res) => {
   try {
     const messageId = parseInt(req.params.messageId, 10);
     const pool = await sql.connect(config);
 
+    // Get message details
+    const messageResult = await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .query('SELECT Content, SenderID FROM Messages WHERE MessageID = @MessageID');
+    
+    if (messageResult.recordset.length === 0) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    
+    const content = messageResult.recordset[0].Content;
+    const senderId = messageResult.recordset[0].SenderID;
+
+    // Disable the message
     await pool.request()
       .input('MessageID', sql.Int, messageId)
       .query('UPDATE Messages SET isActive = \'No\' WHERE MessageID = @MessageID');
+
+    // Create notification for community leaders
+    const leaders = await pool.request()
+      .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
+    
+    if (leaders.recordset.length > 0) {
+      // Create notification
+      const notifResult = await pool.request()
+        .input('NotificationType', sql.VarChar(50), 'MODERATION_ACTION')
+        .input('EntityType', sql.VarChar(50), 'MESSAGE')
+        .input('EntityID', sql.Int, messageId)
+        .input('Title', sql.VarChar(255), 'Message Disabled')
+        .input('Message', sql.VarChar(sql.MAX), `A message has been disabled: "${content.substring(0, 100)}${content.length > 100 ? '...' : ''}"`)
+        .query(`
+          INSERT INTO Notifications 
+          (NotificationType, EntityType, EntityID, Title, Message)
+          OUTPUT INSERTED.NotificationID
+          VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
+        `);
+      
+      const notificationId = notifResult.recordset[0].NotificationID;
+      
+      // Add recipients
+      const values = leaders.recordset.map(leader => 
+        `(${notificationId}, ${leader.UserID})`
+      ).join(',');
+      
+      await pool.request().query(`
+        INSERT INTO NotificationRecipients (NotificationID, UserID)
+        VALUES ${values}
+      `);
+    }
 
     res.status(200).json({ success: true });
   } catch (err) {
@@ -3178,15 +3223,60 @@ app.patch('/api/messages/:messageId/disable', async (req, res) => {
   }
 });
 
-// Restore message endpoint
+// Updated restore message endpoint with notification
 app.patch('/api/messages/:messageId/restore', async (req, res) => {
   try {
     const messageId = parseInt(req.params.messageId, 10);
     const pool = await sql.connect(config);
 
+    // Get message details
+    const messageResult = await pool.request()
+      .input('MessageID', sql.Int, messageId)
+      .query('SELECT Content, SenderID FROM Messages WHERE MessageID = @MessageID');
+    
+    if (messageResult.recordset.length === 0) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+    
+    const content = messageResult.recordset[0].Content;
+    const senderId = messageResult.recordset[0].SenderID;
+
+    // Restore the message
     await pool.request()
       .input('MessageID', sql.Int, messageId)
       .query('UPDATE Messages SET isActive = \'Yes\' WHERE MessageID = @MessageID');
+
+    // Create notification for community leaders
+    const leaders = await pool.request()
+      .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
+    
+    if (leaders.recordset.length > 0) {
+      // Create notification
+      const notifResult = await pool.request()
+        .input('NotificationType', sql.VarChar(50), 'MODERATION_ACTION')
+        .input('EntityType', sql.VarChar(50), 'MESSAGE')
+        .input('EntityID', sql.Int, messageId)
+        .input('Title', sql.VarChar(255), 'Message Restored')
+        .input('Message', sql.VarChar(sql.MAX), `A message has been restored: "${content.substring(0, 100)}${content.length > 100 ? '...' : ''}"`)
+        .query(`
+          INSERT INTO Notifications 
+          (NotificationType, EntityType, EntityID, Title, Message)
+          OUTPUT INSERTED.NotificationID
+          VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
+        `);
+      
+      const notificationId = notifResult.recordset[0].NotificationID;
+      
+      // Add recipients
+      const values = leaders.recordset.map(leader => 
+        `(${notificationId}, ${leader.UserID})`
+      ).join(',');
+      
+      await pool.request().query(`
+        INSERT INTO NotificationRecipients (NotificationID, UserID)
+        VALUES ${values}
+      `);
+    }
 
     res.status(200).json({ success: true });
   } catch (err) {
