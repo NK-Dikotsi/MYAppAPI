@@ -653,10 +653,20 @@ app.post('/addTrustedContact', async (req, res) => {
 
 app.post('/addNotification', async (req, res) => {
   const { userIds, notiTitle, msg, readStatus, reportid, reporterID, notiType } = req.body;
-  const tokens = userIds.split(' ');
+
+  console.log('=== DEBUG: addNotification called ===');
+  console.log('Request body:', req.body);
+
+  if (!userIds || typeof userIds !== 'string') {
+    return res.status(400).json({ success: false, message: 'Invalid userIds parameter.' });
+  }
+
+  const tokens = userIds.trim().split(' ').filter(token => token.length > 0);
   const validUserIds = tokens
     .map(token => parseInt(token))
     .filter(userId => !isNaN(userId) && userId !== parseInt(reporterID));
+
+  console.log('Valid user IDs:', validUserIds);
 
   if (validUserIds.length === 0) {
     return res.status(400).json({ success: false, message: 'No valid user IDs provided.' });
@@ -665,23 +675,21 @@ app.post('/addNotification', async (req, res) => {
   try {
     const pool = await sql.connect(config);
 
-    // Create table-valued parameter - Changed from sql.BigInt to sql.Int
-    const userIdTable = new sql.Table('dbo.UserIdTableType');
-    userIdTable.columns.add('userId', sql.Int); // Fixed: was sql.BigInt
-
-    // Add rows to the table
-    validUserIds.forEach(userId => {
-      userIdTable.rows.add(userId);
-    });
+    // Method 1: Use dynamic SQL with IN clause
+    const userIdList = validUserIds.join(',');
 
     const result = await pool.request()
       .input('notiTitle', sql.VarChar, notiTitle)
       .input('msg', sql.VarChar, msg)
       .input('readStatus', sql.VarChar, readStatus)
-      .input('reportID', sql.Int, reportid) // Fixed: was sql.BigInt
+      .input('reportID', sql.Int, reportid)
       .input('NotiType', sql.VarChar, notiType)
-      .input('UserIds', userIdTable)
       .query(`
+        WITH UserList AS (
+          SELECT value AS userId
+          FROM STRING_SPLIT('${userIdList}', ',')
+          WHERE value != ''
+        )
         INSERT INTO [dbo].[Notification]
         (notiTitle, msg, readStatus, createdDate, reportID, userId, NotiType)
         OUTPUT INSERTED.notificationID
@@ -689,11 +697,12 @@ app.post('/addNotification', async (req, res) => {
           @notiTitle,
           @msg,
           @readStatus,
-          dbo.GetSASTDateTime(),
+          GETDATE(),
           @reportID,
-          u.userId,
+          CAST(ul.userId AS INT),
           @NotiType
-        FROM @UserIds u
+        FROM UserList ul
+        WHERE ISNUMERIC(ul.userId) = 1
       `);
 
     const insertedNotificationIDs = result.recordset.map(row => row.notificationID);
@@ -701,11 +710,74 @@ app.post('/addNotification', async (req, res) => {
 
     res.status(201).json({
       success: true,
-      insertedNotificationIDs
+      insertedNotificationIDs,
+      totalInserted: insertedNotificationIDs.length
     });
+
   } catch (err) {
     console.error('Error submitting notification:', err);
-    res.status(500).json({ success: false, message: 'Internal server error.' });
+    console.error('Error details:', {
+      message: err.message,
+      code: err.code,
+      number: err.number
+    });
+
+    // Fallback: Try individual inserts if STRING_SPLIT fails
+    if (err.message.includes('STRING_SPLIT')) {
+      console.log('STRING_SPLIT not available, trying individual inserts...');
+      try {
+        const pool = await sql.connect(config);
+        const insertedNotificationIDs = [];
+
+        for (const userId of validUserIds) {
+          const result = await pool.request()
+            .input('notiTitle', sql.VarChar, notiTitle)
+            .input('msg', sql.VarChar, msg)
+            .input('readStatus', sql.VarChar, readStatus)
+            .input('reportID', sql.Int, reportid)
+            .input('userId', sql.Int, userId)
+            .input('NotiType', sql.VarChar, notiType)
+            .query(`
+              INSERT INTO [dbo].[Notification]
+              (notiTitle, msg, readStatus, createdDate, reportID, userId, NotiType)
+              OUTPUT INSERTED.notificationID
+              VALUES (
+                @notiTitle,
+                @msg,
+                @readStatus,
+                GETDATE(),
+                @reportID,
+                @userId,
+                @NotiType
+              )
+            `);
+
+          if (result.recordset && result.recordset.length > 0) {
+            insertedNotificationIDs.push(result.recordset[0].notificationID);
+          }
+        }
+
+        res.status(201).json({
+          success: true,
+          insertedNotificationIDs,
+          totalInserted: insertedNotificationIDs.length
+        });
+
+      } catch (fallbackErr) {
+        console.error('Fallback method also failed:', fallbackErr);
+        res.status(500).json({
+          success: false,
+          message: 'Internal server error.',
+          error: fallbackErr.message
+        });
+      }
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error.',
+        error: err.message
+      });
+    }
   }
 });
 
