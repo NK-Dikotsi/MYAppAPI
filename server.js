@@ -653,7 +653,6 @@ app.post('/addTrustedContact', async (req, res) => {
 
 app.post('/addNotification', async (req, res) => {
   const { userIds, notiTitle, msg, readStatus, reportid, reporterID, notiType } = req.body;
-
   const tokens = userIds.split(' ');
   const validUserIds = tokens
     .map(token => parseInt(token))
@@ -666,9 +665,9 @@ app.post('/addNotification', async (req, res) => {
   try {
     const pool = await sql.connect(config);
 
-    // Create table-valued parameter
+    // Create table-valued parameter - Changed from sql.BigInt to sql.Int
     const userIdTable = new sql.Table('dbo.UserIdTableType');
-    userIdTable.columns.add('userId', sql.BigInt);
+    userIdTable.columns.add('userId', sql.Int); // Fixed: was sql.BigInt
 
     // Add rows to the table
     validUserIds.forEach(userId => {
@@ -679,26 +678,25 @@ app.post('/addNotification', async (req, res) => {
       .input('notiTitle', sql.VarChar, notiTitle)
       .input('msg', sql.VarChar, msg)
       .input('readStatus', sql.VarChar, readStatus)
-      .input('reportID', sql.BigInt, reportid)
+      .input('reportID', sql.Int, reportid) // Fixed: was sql.BigInt
       .input('NotiType', sql.VarChar, notiType)
       .input('UserIds', userIdTable)
       .query(`
         INSERT INTO [dbo].[Notification]
         (notiTitle, msg, readStatus, createdDate, reportID, userId, NotiType)
         OUTPUT INSERTED.notificationID
-        SELECT 
-          @notiTitle, 
-          @msg, 
-          @readStatus, 
-          dbo.GetSASTDateTime(), 
-          @reportID, 
-          u.userId, 
+        SELECT
+          @notiTitle,
+          @msg,
+          @readStatus,
+          dbo.GetSASTDateTime(),
+          @reportID,
+          u.userId,
           @NotiType
         FROM @UserIds u
       `);
 
     const insertedNotificationIDs = result.recordset.map(row => row.notificationID);
-
     console.log(`Notifications added for ${insertedNotificationIDs.length} users:`, insertedNotificationIDs);
 
     res.status(201).json({
