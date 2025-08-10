@@ -3092,7 +3092,7 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
         console.error('Background task: Failed to create broadcast notification:', err);
       }
     });
-    
+
   } catch (err) {
     console.error('Error sending message:', err);
     res.status(500).json({ error: 'Failed to send message' });
@@ -3847,8 +3847,13 @@ const addNotificationRecipients = async (notificationId, userIds) => {
   }
 };
 
+// GET /api/Leader/notifications
 app.get('/api/Leader/notifications', async (req, res) => {
-  const userId = req.user.id; // From authentication middleware
+  const userId = parseInt(req.query.userId); // Get from query param
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
 
   try {
     const pool = await sql.connect(config);
@@ -3879,9 +3884,14 @@ app.get('/api/Leader/notifications', async (req, res) => {
   }
 });
 
+// PATCH /api/Leader/notifications/:id/read
 app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
   const notificationId = req.params.id;
-  const userId = req.user.id; // From authentication middleware
+  const userId = req.body.userId; // Get from request body
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
 
   try {
     const pool = await sql.connect(config);
