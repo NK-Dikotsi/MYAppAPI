@@ -1253,57 +1253,6 @@ app.post('/api/messages', requireAuth, async (req, res) => {
       }
     });
 
-    // 4. Background notification for community leaders
-    setImmediate(async () => {
-      try {
-        const broadcastPool = await sql.connect(config);
-        const messageId = result.recordset[0].MessageID;
-        
-        // Get community leaders
-        const leaders = await broadcastPool.request()
-          .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
-        
-        if (leaders.recordset.length > 0) {
-          // Create notification
-          const notifResult = await broadcastPool.request()
-            .input('NotificationType', sql.VarChar(50), 'BROADCAST')
-            .input('EntityType', sql.VarChar(50), 'MESSAGE')
-            .input('EntityID', sql.Int, messageId)
-            .input('Title', sql.VarChar(255), 'New Broadcast Alert')
-            .input('Message', sql.VarChar(sql.MAX), `New emergency alert: ${content.substring(0, 100)}...`)
-            .query(`
-              INSERT INTO Notifications 
-              (NotificationType, EntityType, EntityID, Title, Message)
-              OUTPUT INSERTED.NotificationID
-              VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
-            `);
-          
-          const notificationId = notifResult.recordset[0].NotificationID;
-          
-          // Add recipients
-          const values = leaders.recordset.map(leader => 
-            `(${notificationId}, ${leader.UserID})`
-          ).join(',');
-          
-          await broadcastPool.request().query(`
-            INSERT INTO NotificationRecipients (NotificationID, UserID)
-            VALUES ${values}
-          `);
-        }
-
-      console.log('Broadcast notification data:', {
-        messageId,
-        communityId,
-        leaderCount: leaders.recordset.length,
-        firstLeader: leaders.recordset[0] || 'none'
-      });
-
-        await broadcastPool.close();
-      } catch (err) {
-        console.error('Error in broadcast notification:', err);
-      }
-    });
-
     // Perform content analysis in background - DON'T BLOCK THE RESPONSE
     // Use setImmediate to ensure this runs after the response is sent
     setImmediate(async () => {
