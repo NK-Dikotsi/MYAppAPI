@@ -367,7 +367,7 @@ app.post('/register', async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    
+
     // Insert user with SAST timestamp
     const usersResult = await pool.request()
       .input('FullName', sql.VarChar, fullName)
@@ -405,19 +405,19 @@ app.post('/register', async (req, res) => {
         `);
     }
 
-    res.status(201).json({ 
+    res.status(201).json({
       message: 'User registered successfully.',
       userID: userID
     });
   }
   catch (err) {
     console.error('Registration error:', err);
-    
+
     // More specific error handling
     if (err.number === 2627) { // SQL Server duplicate key error
       return res.status(409).json({ message: 'Email already exists.' });
     }
-    
+
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
@@ -653,37 +653,53 @@ app.post('/addTrustedContact', async (req, res) => {
 
 app.post('/addNotification', async (req, res) => {
   const { userIds, notiTitle, msg, readStatus, reportid, reporterID, notiType } = req.body;
-  //console.log('Received user data: ', req.body);
 
   const tokens = userIds.split(' ');
-  const insertedNotificationIDs = [];
+  const validUserIds = tokens
+    .map(token => parseInt(token))
+    .filter(userId => !isNaN(userId) && userId !== parseInt(reporterID));
+
+  if (validUserIds.length === 0) {
+    return res.status(400).json({ success: false, message: 'No valid user IDs provided.' });
+  }
 
   try {
     const pool = await sql.connect(config);
 
-    for (let i = 0; i < tokens.length; i++) {
-      const userId = parseInt(tokens[i]);
-      if (parseInt(reporterID) === userId) continue;
-      if (!isNaN(userId)) {
-        const result = await pool.request()
-          .input('notiTitle', sql.VarChar, notiTitle)
-          .input('msg', sql.VarChar, msg)
-          .input('readStatus', sql.VarChar, readStatus)
-          .input('userId', sql.BigInt, userId)
-          .input('reportID', sql.BigInt, reportid)
-          .input('NotiType', sql.VarChar, notiType)
-          .query(`
-                        INSERT INTO [dbo].[Notification]
-                        (notiTitle, msg, readStatus, createdDate, reportID, userId, NotiType)
-                        OUTPUT INSERTED.notificationID
-                        VALUES
-                        (@notiTitle, @msg, @readStatus, dbo.GetSASTDateTime(), @reportID, @userId, @NotiType)
-                    `);
+    // Create table-valued parameter
+    const userIdTable = new sql.Table('dbo.UserIdTableType');
+    userIdTable.columns.add('userId', sql.BigInt);
 
-        console.log("Notification added for UserID", userId, "-> ID:", result.recordset[0].notificationID);
-        insertedNotificationIDs.push(result.recordset[0].notificationID);
-      }
-    }
+    // Add rows to the table
+    validUserIds.forEach(userId => {
+      userIdTable.rows.add(userId);
+    });
+
+    const result = await pool.request()
+      .input('notiTitle', sql.VarChar, notiTitle)
+      .input('msg', sql.VarChar, msg)
+      .input('readStatus', sql.VarChar, readStatus)
+      .input('reportID', sql.BigInt, reportid)
+      .input('NotiType', sql.VarChar, notiType)
+      .input('UserIds', userIdTable)
+      .query(`
+        INSERT INTO [dbo].[Notification]
+        (notiTitle, msg, readStatus, createdDate, reportID, userId, NotiType)
+        OUTPUT INSERTED.notificationID
+        SELECT 
+          @notiTitle, 
+          @msg, 
+          @readStatus, 
+          dbo.GetSASTDateTime(), 
+          @reportID, 
+          u.userId, 
+          @NotiType
+        FROM @UserIds u
+      `);
+
+    const insertedNotificationIDs = result.recordset.map(row => row.notificationID);
+
+    console.log(`Notifications added for ${insertedNotificationIDs.length} users:`, insertedNotificationIDs);
 
     res.status(201).json({
       success: true,
@@ -1742,7 +1758,7 @@ app.get('/api/trust-requests/pending', requireAuth, async (req, res) => {
       userId: userId,
       time: sastTime.toISOString()
     });
-    
+
     res.status(500).json({
       success: false,
       message: 'Failed to fetch requests',
@@ -2949,7 +2965,7 @@ app.get('/api/channels/:channelId/messages/disabled', async (req, res) => {
   try {
     const channelId = parseInt(req.params.channelId, 10);
     const pool = await sql.connect(config);
-    
+
     const result = await pool.request()
       .input('ChannelID', sql.Int, channelId)
       .query(`
@@ -2966,7 +2982,7 @@ app.get('/api/channels/:channelId/messages/disabled', async (req, res) => {
           AND m.isActive = 'No'
         ORDER BY m.SentAt DESC
       `);
-    
+
     res.json({
       messages: result.recordset.map(msg => {
         // Handle image conversion safely
@@ -3000,11 +3016,11 @@ app.patch('/api/messages/:messageId/disable', async (req, res) => {
   try {
     const messageId = parseInt(req.params.messageId, 10);
     const pool = await sql.connect(config);
-    
+
     await pool.request()
       .input('MessageID', sql.Int, messageId)
       .query('UPDATE Messages SET isActive = \'No\' WHERE MessageID = @MessageID');
-    
+
     res.status(200).json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to disable message' });
@@ -3016,11 +3032,11 @@ app.patch('/api/messages/:messageId/restore', async (req, res) => {
   try {
     const messageId = parseInt(req.params.messageId, 10);
     const pool = await sql.connect(config);
-    
+
     await pool.request()
       .input('MessageID', sql.Int, messageId)
       .query('UPDATE Messages SET isActive = \'Yes\' WHERE MessageID = @MessageID');
-    
+
     res.status(200).json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to restore message' });
@@ -3211,7 +3227,7 @@ app.get('/api/flags/counts', async (req, res) => {
     `;
 
     const result = await pool.request().query(query);
-    
+
     // Convert to { UserID: count } mapping
     const countsMap = {};
     result.recordset.forEach(row => {
@@ -3591,8 +3607,8 @@ app.get('/getReportsadmin', async (req, res) => {
 function getDateRange(timeFrame) {
   const now = new Date();
   const start = new Date(now);
-  
-  switch(timeFrame) {
+
+  switch (timeFrame) {
     case 'day':
       start.setDate(now.dbo.GetSASTDateTime() - 1);
       break;
@@ -3608,7 +3624,7 @@ function getDateRange(timeFrame) {
     default:
       start.setMonth(now.getMonth() - 1);
   }
-  
+
   // Format dates for SQL Server
   return {
     start: start.toISOString().slice(0, 19).replace('T', ' '),
@@ -3621,16 +3637,16 @@ app.get('/api/analytics/overview', async (req, res) => {
   try {
     const { timeFrame = 'month' } = req.query;
     const { start, end } = getDateRange(timeFrame);
-    
+
     const pool = await sql.connect(config);
-    
+
     // Get total reported incidents in time frame
     const reportedQuery = `
       SELECT COUNT(*) AS count
       FROM Report
       WHERE dateReported BETWEEN '${start}' AND '${end}'
     `;
-    
+
     // Get resolved incidents in time frame - using 'Resolved' status
     const resolvedQuery = `
       SELECT COUNT(*) AS count
@@ -3638,18 +3654,18 @@ app.get('/api/analytics/overview', async (req, res) => {
       WHERE dateReported BETWEEN '${start}' AND '${end}'
         AND Report_Status = 'Completed'
     `;
-    
+
     const reportedRes = await pool.request().query(reportedQuery);
     const resolvedRes = await pool.request().query(resolvedQuery);
-    
+
     const reported = reportedRes.recordset[0]?.count || 0;
     const resolved = resolvedRes.recordset[0]?.count || 0;
     const unresolved = reported - resolved;
-    
+
     res.json({ reported, resolved, unresolved });
   } catch (err) {
     console.error('Error fetching overview data:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Internal server error',
       details: err.message
     });
@@ -3663,10 +3679,10 @@ app.get('/api/analytics/time', async (req, res) => {
     const { timeFrame = 'month' } = req.query;
     const { start, end } = getDateRange(timeFrame);
     const pool = await sql.connect(config);
-    
+
     let query = '';
     let labels = [];
-    
+
     if (timeFrame === 'day') {
       // Group by hour
       query = `
@@ -3677,7 +3693,7 @@ app.get('/api/analytics/time', async (req, res) => {
         ORDER BY hour
       `;
       labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
-    } 
+    }
     else if (timeFrame === 'week') {
       // Group by day of week
       query = `
@@ -3711,23 +3727,23 @@ app.get('/api/analytics/time', async (req, res) => {
       `;
       labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     }
-    
+
     const result = await pool.request().query(query);
-    
+
     // Create data array with zeros
     const data = labels.map(() => 0);
-    
+
     // Fill with actual data
     result.recordset.forEach(row => {
-      const index = timeFrame === 'day' ? row.hour : 
-                   timeFrame === 'week' ? (row.day - 1) : 
-                   timeFrame === 'month' ? (row.day - 1) : 
-                   (row.month - 1);
+      const index = timeFrame === 'day' ? row.hour :
+        timeFrame === 'week' ? (row.day - 1) :
+          timeFrame === 'month' ? (row.day - 1) :
+            (row.month - 1);
       if (index >= 0 && index < data.length) {
         data[index] = row.count;
       }
     });
-    
+
     res.json({ labels, data });
   } catch (err) {
     console.error('Error fetching time data:', err);
@@ -3739,7 +3755,7 @@ app.get('/api/analytics/time', async (req, res) => {
 app.get('/api/analytics/type', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     const query = `
       SELECT 
         CASE 
@@ -3756,27 +3772,27 @@ app.get('/api/analytics/type', async (req, res) => {
           ELSE 'Other'
         END
     `;
-    
+
     const result = await pool.request().query(query);
-    
+
     // Define required types in specific order
     const requiredTypes = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS', 'Other'];
     const typeCounts = {};
-    
+
     // Initialize with zeros
     requiredTypes.forEach(type => {
       typeCounts[type] = 0;
     });
-    
+
     // Fill with actual counts
     result.recordset.forEach(row => {
       typeCounts[row.type] = row.count;
     });
-    
+
     // Convert to arrays
     const labels = requiredTypes;
     const data = labels.map(type => typeCounts[type]);
-    
+
     res.json({ labels, data });
   } catch (err) {
     console.error('Error fetching type data:', err);
@@ -3790,7 +3806,7 @@ app.get('/api/analytics/top-responders', async (req, res) => {
     const { timeFrame = 'month' } = req.query;
     const { start, end } = getDateRange(timeFrame);
     const pool = await sql.connect(config);
-    
+
     const query = `
       SELECT TOP 5 
         u.UserID,
@@ -3803,12 +3819,12 @@ app.get('/api/analytics/top-responders', async (req, res) => {
       GROUP BY u.UserID, u.FullName
       ORDER BY responseCount DESC
     `;
-    
+
     const result = await pool.request().query(query);
-    
+
     const labels = result.recordset.map(row => `${row.FullName} (ID: ${row.UserID})`);
     const data = result.recordset.map(row => row.responseCount);
-    
+
     res.json({ labels, data });
   } catch (err) {
     console.error('Error fetching top responders:', err);
@@ -3822,7 +3838,7 @@ app.get('/api/analytics/funnel', async (req, res) => {
     const { timeFrame = 'month' } = req.query;
     const { start, end } = getDateRange(timeFrame);
     const pool = await sql.connect(config);
-    
+
     const query = `
       SELECT 
         (SELECT COUNT(*) FROM Report 
@@ -3852,10 +3868,10 @@ app.get('/api/analytics/funnel', async (req, res) => {
          WHERE Report_Status = 'False report'
          AND dateReported BETWEEN '${start}' AND '${end}') AS falseReport
     `;
-    
+
     const result = await pool.request().query(query);
     const row = result.recordset[0];
-    
+
     res.json({
       logged: row.logged || 0,
       accepted: row.accepted || 0,
