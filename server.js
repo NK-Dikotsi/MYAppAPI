@@ -3832,7 +3832,11 @@ app.get('/api/misuses/counts', async (req, res) => {
 });
 // Get flag details for a specific user
 app.get('/api/flags/user/:userId', async (req, res) => {
-  const { userId } = req.params;
+  const userId = parseInt(req.params.userId, 10); // Get from query param
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
