@@ -4034,10 +4034,10 @@ function getDateRange(timeFrame) {
 
   switch (timeFrame) {
     case 'day':
-      start.setDate(now.dbo.GetSASTDateTime() - 1);
+      start.setDate(now.getDate() - 1);
       break;
     case 'week':
-      start.setDate(now.dbo.GetSASTDateTime() - 7);
+      start.setDate(now.getDate()- 7);
       break;
     case 'month':
       start.setMonth(now.getMonth() - 1);
