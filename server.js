@@ -3851,7 +3851,7 @@ app.post('/api/sleep/check-expired', async (req, res) => {
 });
 
 // Get all misuse reports
-app.get('/api/misusesuser/:userId', async (req, res) => {
+app.get('/api/misuses/user/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId, 10); // Get from query param
 
     if (!userId || isNaN(userId)) {
