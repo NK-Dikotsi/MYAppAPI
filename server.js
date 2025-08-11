@@ -2927,7 +2927,29 @@ app.get('/api/leader/current', async (req, res) => {
 
 
 
+app.get('/api/votes/current', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
 
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT NomineeID as nominationId 
+        FROM Votes 
+        WHERE VoterID = @UserID
+      `);
+
+    if (result.recordset.length > 0) {
+      res.json({ vote: result.recordset[0] });
+    } else {
+      res.json({ vote: null });
+    }
+  } catch (err) {
+    console.error('Error fetching current vote:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
 
