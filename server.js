@@ -4095,6 +4095,39 @@ app.get('/getCommunityMembers', async (req, res) => {
   }
 });
 
+app.get('/topFiveResponders', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query(`
+      SELECT TOP 5 
+          u.UserID,
+          u.FullName,
+          u.ProfilePhoto,
+          COUNT(r.ReportID) AS TotalReports
+      FROM dbo.Users u
+      JOIN dbo.Report r
+          ON u.UserID = r.ReporterID
+      GROUP BY 
+          u.UserID, 
+          u.FullName, 
+          u.ProfilePhoto
+      ORDER BY 
+          TotalReports DESC
+    `);
+
+    res.status(200).json({
+      success: true,
+      data: result.recordset
+    });
+  } catch (error) {
+    console.error('Error fetching top responders:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error fetching top responders'
+    });
+  }
+});
+
 
 app.get('/reports/count', async (req, res) => {
   try {
