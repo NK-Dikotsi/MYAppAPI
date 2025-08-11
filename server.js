@@ -4132,16 +4132,16 @@ app.get('/topFiveResponders', async (req, res) => {
           u.UserID,
           u.FullName,
           u.ProfilePhoto,
-          COUNT(r.ReportID) AS TotalReports
+          COUNT(resp.ResponseID) AS TotalResponses
       FROM dbo.Users u
-      JOIN dbo.Report r
-          ON u.UserID = r.ReporterID
+      JOIN dbo.Response resp
+          ON u.UserID = resp.UserID
       GROUP BY 
           u.UserID, 
           u.FullName, 
           u.ProfilePhoto
       ORDER BY 
-          TotalReports DESC
+          TotalResponses DESC
     `);
 
     res.status(200).json({
