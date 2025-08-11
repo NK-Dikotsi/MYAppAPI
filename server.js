@@ -2619,6 +2619,7 @@ app.get('/trusted/count', async (req, res) => {
 
 /************************************VOTING SYSTEM************************************** */
 // Voting settings endpoints
+// Fixed Voting settings endpoints
 app.get('/api/voting/settings', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -2634,12 +2635,11 @@ app.get('/api/voting/settings', async (req, res) => {
       });
     }
 
-    // Ensure we always return valid dates or null
     const settings = result.recordset[0];
     res.json({
-      votingEnabled: settings.VotingEnabled || false,
-      startDate: settings.StartDate || null,
-      endDate: settings.EndDate || null
+      votingEnabled: !!settings.VotingEnabled,
+      startDate: settings.StartDate,
+      endDate: settings.EndDate
     });
   } catch (err) {
     console.error('Error fetching voting settings:', err);
@@ -2650,6 +2650,7 @@ app.get('/api/voting/settings', async (req, res) => {
     });
   }
 });
+
 
 app.post('/api/voting/settings', requireAuth, async (req, res) => {
   const { votingEnabled, startDate, endDate } = req.body;
@@ -2697,6 +2698,11 @@ app.post('/api/nominations', requireAuth, async (req, res) => {
 
     const nomineeId = nomineeResult.recordset[0].UserID;
 
+    // Prevent self-nomination
+    if (nomineeId === nominatedBy) {
+      return res.status(400).json({ error: 'You cannot nominate yourself' });
+    }
+
     // Check if nomination already exists
     const existingNomination = await pool.request()
       .input('NomineeID', sql.Int, nomineeId)
@@ -2707,7 +2713,7 @@ app.post('/api/nominations', requireAuth, async (req, res) => {
       `);
 
     if (existingNomination.recordset.length > 0) {
-      return res.status(400).json({ error: 'Nomination already exists' });
+      return res.status(400).json({ error: 'You have already nominated this person' });
     }
 
     // Create new nomination
@@ -2797,13 +2803,17 @@ app.post('/api/nominations/respond', requireAuth, async (req, res) => {
 });
 
 app.post('/api/votes', requireAuth, async (req, res) => {
-  const { nominationId } = req.body; // Now accepting nominationId instead of nomineeId
+  const { nominationId } = req.body;
   const voterId = req.session.user.id;
+
+  if (!nominationId) {
+    return res.status(400).json({ error: 'Nomination ID is required' });
+  }
 
   try {
     const pool = await sql.connect(config);
 
-    // Check if voting is enabled
+    // Check if voting is enabled and within period
     const settings = await pool.request()
       .query('SELECT TOP 1 VotingEnabled, StartDate, EndDate FROM VotingSettings ORDER BY SettingID DESC');
     
@@ -2844,19 +2854,19 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     // Check if user has already voted
     const existingVote = await pool.request()
       .input('VoterID', sql.Int, voterId)
-      .query('SELECT 1 FROM Votes WHERE VoterID = @VoterID');
+      .query('SELECT VoteID FROM Votes WHERE VoterID = @VoterID');
 
     if (existingVote.recordset.length > 0) {
       return res.status(400).json({ error: 'You have already voted' });
     }
 
-    // Record the vote
+    // Record the vote - FIXED: Use NominationID not NomineeID
     await pool.request()
       .input('VoterID', sql.Int, voterId)
-      .input('NomineeID', sql.Int, nominationId)
+      .input('NominationID', sql.Int, nominationId)
       .query(`
         INSERT INTO Votes (VoterID, NomineeID)
-        VALUES (@VoterID, @NomineeID)
+        VALUES (@VoterID, @NominationID)
       `);
 
     res.json({ success: true });
@@ -2866,7 +2876,7 @@ app.post('/api/votes', requireAuth, async (req, res) => {
   }
 });
 
-// Improved Results endpoint
+
 app.get('/api/votes/results', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -2884,7 +2894,7 @@ app.get('/api/votes/results', async (req, res) => {
         LEFT JOIN Votes v ON n.NominationID = v.NomineeID
         WHERE n.Status = 'accepted'
         GROUP BY n.NominationID, u.UserID, u.FullName, u.Username, u.ProfilePhoto
-        ORDER BY VoteCount DESC
+        ORDER BY VoteCount DESC, u.FullName ASC
       `);
 
     res.json(result.recordset);
@@ -2895,6 +2905,7 @@ app.get('/api/votes/results', async (req, res) => {
 });
 
 // Current leader endpoint (now calculated from votes)
+// Fixed Current leader endpoint
 app.get('/api/leader/current', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -2911,6 +2922,7 @@ app.get('/api/leader/current', async (req, res) => {
         LEFT JOIN Votes v ON n.NominationID = v.NomineeID
         WHERE n.Status = 'accepted'
         GROUP BY u.UserID, u.FullName, u.Username, u.ProfilePhoto
+        HAVING COUNT(v.VoteID) > 0
         ORDER BY VoteCount DESC
       `);
 
@@ -2950,7 +2962,6 @@ app.get('/api/votes/current', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 
 
 
