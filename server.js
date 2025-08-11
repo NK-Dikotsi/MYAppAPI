@@ -2617,7 +2617,302 @@ app.get('/trusted/count', async (req, res) => {
 });
 
 
+/************************************VOTING SYSTEM************************************** */
+// Voting settings endpoints
+app.get('/api/voting/settings', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .query('SELECT TOP 1 * FROM VotingSettings ORDER BY SettingID DESC');
+    
+    if (result.recordset.length === 0) {
+      return res.json({
+        votingEnabled: false,
+        startDate: null,
+        endDate: null
+      });
+    }
 
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error('Error fetching voting settings:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/voting/settings', requireAuth, async (req, res) => {
+  const { votingEnabled, startDate, endDate } = req.body;
+  const updatedBy = req.session.user.id;
+
+  try {
+    const pool = await sql.connect(config);
+    await pool.request()
+      .input('VotingEnabled', sql.Bit, votingEnabled)
+      .input('StartDate', sql.DateTime, startDate)
+      .input('EndDate', sql.DateTime, endDate)
+      .input('UpdatedBy', sql.Int, updatedBy)
+      .query(`
+        INSERT INTO VotingSettings (VotingEnabled, StartDate, EndDate, UpdatedBy)
+        VALUES (@VotingEnabled, @StartDate, @EndDate, @UpdatedBy)
+      `);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating voting settings:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Nomination endpoints
+app.post('/api/nominations', requireAuth, async (req, res) => {
+  const { nomineeUsername, message } = req.body;
+  const nominatedBy = req.session.user.id;
+
+  if (!nomineeUsername) {
+    return res.status(400).json({ error: 'Nominee username is required' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    // First find the nominee user
+    const nomineeResult = await pool.request()
+      .input('Username', sql.NVarChar(50), nomineeUsername)
+      .query('SELECT UserID FROM Users WHERE Username = @Username');
+
+    if (nomineeResult.recordset.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const nomineeId = nomineeResult.recordset[0].UserID;
+
+    // Check if nomination already exists
+    const existingNomination = await pool.request()
+      .input('NomineeID', sql.Int, nomineeId)
+      .input('NominatedBy', sql.Int, nominatedBy)
+      .query(`
+        SELECT NominationID FROM Nominations 
+        WHERE NomineeID = @NomineeID AND NominatedBy = @NominatedBy
+      `);
+
+    if (existingNomination.recordset.length > 0) {
+      return res.status(400).json({ error: 'Nomination already exists' });
+    }
+
+    // Create new nomination
+    const result = await pool.request()
+      .input('NomineeID', sql.Int, nomineeId)
+      .input('NominatedBy', sql.Int, nominatedBy)
+      .input('Message', sql.NVarChar(255), message || null)
+      .query(`
+        INSERT INTO Nominations (NomineeID, NominatedBy, Message)
+        OUTPUT INSERTED.NominationID
+        VALUES (@NomineeID, @NominatedBy, @Message)
+      `);
+
+    res.status(201).json({ 
+      success: true,
+      nominationId: result.recordset[0].NominationID
+    });
+  } catch (err) {
+    console.error('Error creating nomination:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/nominations/pending', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT 
+          n.NominationID,
+          n.Message,
+          n.NominatedAt,
+          u.UserID as NominatorID,
+          u.FullName as NominatorName,
+          u.Username as NominatorUsername
+        FROM Nominations n
+        JOIN Users u ON n.NominatedBy = u.UserID
+        WHERE n.NomineeID = @UserID AND n.Status = 'pending'
+        ORDER BY n.NominatedAt DESC
+      `);
+
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching pending nominations:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/nominations/respond', requireAuth, async (req, res) => {
+  const { nominationId, accept } = req.body;
+  const userId = req.session.user.id;
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Verify the nomination exists and is pending
+    const nomination = await pool.request()
+      .input('NominationID', sql.Int, nominationId)
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT NomineeID FROM Nominations 
+        WHERE NominationID = @NominationID AND NomineeID = @UserID AND Status = 'pending'
+      `);
+
+    if (nomination.recordset.length === 0) {
+      return res.status(404).json({ error: 'Nomination not found or already responded' });
+    }
+
+    // Update nomination status
+    await pool.request()
+      .input('NominationID', sql.Int, nominationId)
+      .input('Status', sql.NVarChar(20), accept ? 'accepted' : 'declined')
+      .query(`
+        UPDATE Nominations 
+        SET Status = @Status, RespondedAt = dbo.GetSASTDateTime()
+        WHERE NominationID = @NominationID
+      `);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error responding to nomination:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/votes', requireAuth, async (req, res) => {
+  const { nominationId } = req.body; // Now accepting nominationId instead of nomineeId
+  const voterId = req.session.user.id;
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Check if voting is enabled
+    const settings = await pool.request()
+      .query('SELECT TOP 1 VotingEnabled, StartDate, EndDate FROM VotingSettings ORDER BY SettingID DESC');
+    
+    const votingSettings = settings.recordset[0] || { VotingEnabled: false };
+    
+    if (!votingSettings.VotingEnabled) {
+      return res.status(403).json({ error: 'Voting is not currently enabled' });
+    }
+
+    // Check if current time is within voting period
+    const now = new Date();
+    if (votingSettings.StartDate && new Date(votingSettings.StartDate) > now) {
+      return res.status(403).json({ error: 'Voting has not started yet' });
+    }
+    
+    if (votingSettings.EndDate && new Date(votingSettings.EndDate) < now) {
+      return res.status(403).json({ error: 'Voting has ended' });
+    }
+
+    // Check if nomination exists and is accepted
+    const nominationCheck = await pool.request()
+      .input('NominationID', sql.Int, nominationId)
+      .query(`
+        SELECT NomineeID FROM Nominations 
+        WHERE NominationID = @NominationID AND Status = 'accepted'
+      `);
+
+    if (nominationCheck.recordset.length === 0) {
+      return res.status(400).json({ error: 'Nomination not found or not accepted' });
+    }
+
+    // Check if user is trying to vote for themselves
+    const nomineeId = nominationCheck.recordset[0].NomineeID;
+    if (nomineeId === voterId) {
+      return res.status(400).json({ error: 'You cannot vote for yourself' });
+    }
+
+    // Check if user has already voted
+    const existingVote = await pool.request()
+      .input('VoterID', sql.Int, voterId)
+      .query('SELECT 1 FROM Votes WHERE VoterID = @VoterID');
+
+    if (existingVote.recordset.length > 0) {
+      return res.status(400).json({ error: 'You have already voted' });
+    }
+
+    // Record the vote
+    await pool.request()
+      .input('VoterID', sql.Int, voterId)
+      .input('NomineeID', sql.Int, nominationId)
+      .query(`
+        INSERT INTO Votes (VoterID, NomineeID)
+        VALUES (@VoterID, @NomineeID)
+      `);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error recording vote:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Improved Results endpoint
+app.get('/api/votes/results', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .query(`
+        SELECT 
+          n.NominationID,
+          u.UserID,
+          u.FullName,
+          u.Username,
+          u.ProfilePhoto,
+          COUNT(v.VoteID) AS VoteCount
+        FROM Nominations n
+        JOIN Users u ON n.NomineeID = u.UserID
+        LEFT JOIN Votes v ON n.NominationID = v.NomineeID
+        WHERE n.Status = 'accepted'
+        GROUP BY n.NominationID, u.UserID, u.FullName, u.Username, u.ProfilePhoto
+        ORDER BY VoteCount DESC
+      `);
+
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching vote results:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Current leader endpoint (now calculated from votes)
+app.get('/api/leader/current', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .query(`
+        SELECT TOP 1
+          u.UserID,
+          u.FullName,
+          u.Username,
+          u.ProfilePhoto,
+          COUNT(v.VoteID) AS VoteCount
+        FROM Nominations n
+        JOIN Users u ON n.NomineeID = u.UserID
+        LEFT JOIN Votes v ON n.NominationID = v.NomineeID
+        WHERE n.Status = 'accepted'
+        GROUP BY u.UserID, u.FullName, u.Username, u.ProfilePhoto
+        ORDER BY VoteCount DESC
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ error: 'No current leader' });
+    }
+
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error('Error fetching current leader:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
 
