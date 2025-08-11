@@ -4134,7 +4134,7 @@ app.get('/topFiveResponders', async (req, res) => {
   let pool;
   try {
 
-    pool = await sql.connect(dbConfig);
+    pool = await sql.connect(config);
     
     const result = await pool.request().query(`
       SELECT TOP 5
