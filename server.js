@@ -4127,33 +4127,27 @@ app.get('/getCommunityMembers', async (req, res) => {
 app.get('/topFiveResponders', async (req, res) => {
   try {
     const pool = await poolPromise;
-    const result = await pool.request().query(`
+    const query = `
       SELECT TOP 5 
           u.UserID,
           u.FullName,
           u.ProfilePhoto,
-          COUNT(resp.ResponseID) AS TotalResponses
+          COUNT(r.ResponseID) AS TotalResponses
       FROM dbo.Users u
-      JOIN dbo.Response resp
-          ON u.UserID = resp.UserID
+      JOIN dbo.Response r
+          ON u.UserID = r.UserID
       GROUP BY 
           u.UserID, 
           u.FullName, 
           u.ProfilePhoto
       ORDER BY 
           TotalResponses DESC
-    `);
-
-    res.status(200).json({
-      success: true,
-      data: result.recordset
-    });
+    `;
+    const result = await pool.request().query(query);
+    res.status(200).json({ success: true, data: result.recordset });
   } catch (error) {
-    console.error('Error fetching top responders:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Server error fetching top responders'
-    });
+    console.error("Error fetching top responders:", error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
