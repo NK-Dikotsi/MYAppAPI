@@ -3830,29 +3830,29 @@ app.get('/api/misuses/counts', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 // Get flag details for a specific user
 app.get('/api/flags/user/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId, 10); // Get from query param
 
-  if (!userId || isNaN(userId)) {
-    return res.status(400).json({ error: 'Invalid user ID' });
-  }
+    if (!userId || isNaN(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
       .input('userId', sql.Int, userId)
       .query(`
         SELECT 
-          f.FlagID,
-          f.FlagType,
-          f.Description,
-          f.CreatedAt,
-          f.Status,
-          reporter.FullName AS ReporterName
-        FROM Flags f
-        INNER JOIN Users reporter ON f.ReporterID = reporter.UserID
-        WHERE f.UserID = @userId
-        ORDER BY f.CreatedAt DESC
+          fm.FlagID,
+          fm.Reason AS FlagType,
+          fm.FlaggedAt AS CreatedAt,
+          reporter.FullName AS ReporterName,
+          fm.Reason AS Description
+        FROM FlaggedMessages fm
+        INNER JOIN Users reporter ON fm.UserID = reporter.UserID
+        WHERE fm.UserID = @userId
+        ORDER BY fm.FlaggedAt DESC
       `);
     
     res.json(result.recordset);
