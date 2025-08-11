@@ -2816,6 +2816,7 @@ app.post('/api/nominations/respond', requireAuth, async (req, res) => {
 });
 
 // Fixed Voting endpoints
+// Fixed Voting endpoints
 app.post('/api/votes', requireAuth, async (req, res) => {
   const { nominationId } = req.body;
   const voterId = req.session.user.id;
@@ -2874,7 +2875,7 @@ app.post('/api/votes', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'You have already voted' });
     }
 
-    // Record the vote - FIXED: Use NominationID not NomineeID
+    // Record the vote - FIXED: Use correct field mapping
     await pool.request()
       .input('VoterID', sql.Int, voterId)
       .input('NominationID', sql.Int, nominationId)
@@ -2911,7 +2912,17 @@ app.get('/api/votes/results', async (req, res) => {
         ORDER BY VoteCount DESC, u.FullName ASC
       `);
 
-    res.json(result.recordset);
+    // Map the result to match frontend expectations
+    const mappedResult = result.recordset.map(record => ({
+      nominationId: record.NominationID,
+      userId: record.UserID,
+      fullName: record.FullName,
+      username: record.Username,
+      profilePhoto: record.ProfilePhoto,
+      voteCount: record.VoteCount || 0
+    }));
+
+    res.json(mappedResult);
   } catch (err) {
     console.error('Error fetching vote results:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -2943,7 +2954,14 @@ app.get('/api/leader/current', async (req, res) => {
       return res.status(404).json({ error: 'No current leader' });
     }
 
-    res.json(result.recordset[0]);
+    const leader = result.recordset[0];
+    res.json({
+      userId: leader.UserID,
+      fullName: leader.FullName,
+      username: leader.Username,
+      profilePhoto: leader.ProfilePhoto,
+      voteCount: leader.VoteCount
+    });
   } catch (err) {
     console.error('Error fetching current leader:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -2959,9 +2977,9 @@ app.get('/api/votes/current', requireAuth, async (req, res) => {
     const result = await pool.request()
       .input('UserID', sql.Int, userId)
       .query(`
-        SELECT NomineeID as nominationId 
-        FROM Votes 
-        WHERE VoterID = @UserID
+        SELECT v.NomineeID as nominationId 
+        FROM Votes v
+        WHERE v.VoterID = @UserID
       `);
 
     if (result.recordset.length > 0) {
@@ -2974,7 +2992,6 @@ app.get('/api/votes/current', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 
 
 
