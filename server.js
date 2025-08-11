@@ -4256,11 +4256,56 @@ app.get('/getReportsByType', async (req, res) => {
     request.input("type", sql.VarChar, type);
 
     const result = await request.query(`
-      SELECT * FROM [dbo].[Report]
+      SELECT ReportID,Report_Location FROM [dbo].[Report]
       WHERE emergencyType = @type
     `);
 
-    res.status(200).json({ success: true, Reports: result.recordset });
+    // Count suburbs from the reports
+    const suburbCounts = new Map();
+    
+    // Process reports in parallel
+    const geocodePromises = result.recordset.map(async (report) => {
+      const [latStr, lngStr] = report.Report_Location.split(";");
+      const lat = parseFloat(latStr);
+      const lng = parseFloat(lngStr);
+
+      if (!isNaN(lat) && !isNaN(lng)) {
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
+          );
+          const geoData = await response.json();
+          
+          const address = geoData.address || {};
+          let suburb = address.suburb || 
+                    address.neighbourhood || 
+                    address.village || 
+                    address.town || 
+                    address.city || 
+                    "Unknown Area";
+          
+          // Update suburb count
+          suburbCounts.set(suburb, (suburbCounts.get(suburb) || 0) + 1);
+        } catch (err) {
+          console.error("Reverse geocoding failed:", err);
+          suburbCounts.set("Unknown Area", (suburbCounts.get("Unknown Area") || 0) + 1);
+        }
+      }
+    });
+
+    await Promise.all(geocodePromises);
+
+    // Convert map to array of objects
+    const suburbs = Array.from(suburbCounts.entries()).map(([name, count]) => ({
+      name,
+      count
+    }));
+
+    res.status(200).json({ 
+      success: true, 
+      Reports: result.recordset,
+      Suburbs: suburbs 
+    });
   } catch (err) {
     console.error('SQL ERROR:', err);
     res.status(500).json({ success: false, error: 'Database error' });
