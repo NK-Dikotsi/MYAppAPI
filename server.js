@@ -2625,6 +2625,7 @@ app.get('/api/voting/settings', async (req, res) => {
     const result = await pool.request()
       .query('SELECT TOP 1 * FROM VotingSettings ORDER BY SettingID DESC');
     
+    // Return defaults if no settings exist
     if (result.recordset.length === 0) {
       return res.json({
         votingEnabled: false,
@@ -2633,10 +2634,20 @@ app.get('/api/voting/settings', async (req, res) => {
       });
     }
 
-    res.json(result.recordset[0]);
+    // Ensure we always return valid dates or null
+    const settings = result.recordset[0];
+    res.json({
+      votingEnabled: settings.VotingEnabled || false,
+      startDate: settings.StartDate || null,
+      endDate: settings.EndDate || null
+    });
   } catch (err) {
     console.error('Error fetching voting settings:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ 
+      votingEnabled: false,
+      startDate: null,
+      endDate: null
+    });
   }
 });
 
