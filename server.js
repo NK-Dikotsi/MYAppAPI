@@ -3792,6 +3792,13 @@ app.get('/api/volunteers', async (req, res) => {
   try {
     const pool = await sql.connect(config);
 
+    // First, update expired sleep statuses
+    await pool.request().query(`
+      UPDATE Sleep 
+      SET OnBreak = 'No'
+      WHERE OnBreak = 'Yes' AND EndTime <= dbo.GetSASTDateTime()
+    `);
+
     const result = await pool.request().query(`
       SELECT 
         u.UserID,
@@ -3817,6 +3824,28 @@ app.get('/api/volunteers', async (req, res) => {
     res.json({ volunteers: result.recordset });
   } catch (err) {
     console.error('Error fetching volunteers:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Check and update expired sleep statuses
+app.post('/api/sleep/check-expired', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    
+    const result = await pool.request().query(`
+      UPDATE Sleep 
+      SET OnBreak = 'No'
+      OUTPUT INSERTED.UserID
+      WHERE OnBreak = 'Yes' AND EndTime <= dbo.GetSASTDateTime()
+    `);
+    
+    res.json({ 
+      updatedUsers: result.recordset.map(row => row.UserID),
+      message: `${result.rowsAffected} users reactivated`
+    });
+  } catch (err) {
+    console.error('Error updating sleep status:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
