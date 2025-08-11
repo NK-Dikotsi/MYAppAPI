@@ -3714,7 +3714,7 @@ app.get('/api/messages/:UserID/unread-count', requireAuth, async (req, res) => {
 
 //******************Manage users ENDPOINTS ADMIN********************//
 
-// Get all volunteers (community members with role "Volunteer")
+// Get all volunteers (community members with role "Volunteer") dbo.GetSASTDateTime()
 app.get('/api/volunteers', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -3732,7 +3732,7 @@ app.get('/api/volunteers', async (req, res) => {
             SELECT 1 FROM Sleep 
             WHERE UserID = u.UserID 
             AND OnBreak = 'Yes' 
-            AND (Duration IS NULL OR Duration > dbo.GetSASTDateTime())
+            AND EndTime > dbo.GetSASTDateTime()
           ) THEN 0 
           ELSE 1 
         END AS isActive
@@ -3779,27 +3779,27 @@ app.get('/api/flags/counts', async (req, res) => {
 
 // put users to sleep
 app.post('/api/sleep', async (req, res) => {
-  const { userId, durationHours } = req.body;
+  const { userId, durationHours, sleepType } = req.body;
 
-  if (!userId || !durationHours) {
+  if (!userId || !durationHours || !sleepType) {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
   try {
     const pool = await sql.connect(config);
-
-    // Calculate end time
-    const durationMinutes = durationHours * 60;
+    const startTime = new Date();
     const endTime = new Date();
-    endTime.setMinutes(endTime.getMinutes() + durationMinutes);
+    endTime.setHours(endTime.getHours() + durationHours);
 
     await pool.request()
       .input('UserID', sql.Int, userId)
       .input('OnBreak', sql.VarChar, 'Yes')
-      .input('Duration', sql.DateTime, endTime)
+      .input('SleepType', sql.VarChar, sleepType)
+      .input('StartTime', sql.DateTime, startTime)
+      .input('EndTime', sql.DateTime, endTime)
       .query(`
-        INSERT INTO Sleep (UserID, OnBreak, Duration)
-        VALUES (@UserID, @OnBreak, @Duration)
+        INSERT INTO Sleep (UserID, OnBreak, SleepType, StartTime, EndTime)
+        VALUES (@UserID, @OnBreak, @SleepType, @StartTime, @EndTime)
       `);
 
     res.json({ success: true });
