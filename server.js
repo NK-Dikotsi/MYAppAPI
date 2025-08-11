@@ -3808,6 +3808,33 @@ app.get('/api/misuses/counts', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// Get flag details for a specific user
+app.get('/api/flags/user/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`
+        SELECT 
+          f.FlagID,
+          f.FlagType,
+          f.Description,
+          f.CreatedAt,
+          f.Status,
+          reporter.FullName AS ReporterName
+        FROM Flags f
+        INNER JOIN Users reporter ON f.ReporterID = reporter.UserID
+        WHERE f.UserID = @userId
+        ORDER BY f.CreatedAt DESC
+      `);
+    
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching flags for user:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Get flag counts for all users
 app.get('/api/flags/counts', async (req, res) => {
