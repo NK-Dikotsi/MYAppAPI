@@ -3796,6 +3796,69 @@ app.get('/getReportsByUser', async (req, res) => {
   }
 });
 
+app.get('/getReportsByTypeWithSuburbs', async (req, res) => {
+  const { type } = req.query;
+  if (!type) {
+    return res.status(400).json({ success: false, error: 'Missing report type' });
+  }
+
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input("type", sql.VarChar, type)
+      .query(`
+        SELECT ReportID, Report_Location
+        FROM Report
+        WHERE emergencyType = @type
+      `);
+
+    const reports = result.recordset;
+    const suburbCounts = {};
+    const points = [];
+    const seenCoords = new Map();
+
+    for (const { Report_Location } of reports) {
+      const [latStr, lngStr] = (Report_Location || "").split(";");
+      const lat = parseFloat(latStr);
+      const lng = parseFloat(lngStr);
+
+      if (isNaN(lat) || isNaN(lng)) continue;
+
+      points.push({ lat, lng, intensity: 1 });
+      const coordKey = `${lat},${lng}`;
+
+      if (!seenCoords.has(coordKey)) {
+        try {
+          const geoRes = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&zoom=18`,
+            { headers: { "User-Agent": "SizaCommunityWatch/1.0" } }
+          );
+
+          if (!geoRes.ok) throw new Error(`Geocoding error: ${geoRes.status}`);
+          const geoData = await geoRes.json();
+          const suburb = geoData?.address?.suburb || geoData?.address?.town || "Unknown Location";
+          seenCoords.set(coordKey, suburb);
+        } catch (err) {
+          console.error('Geocoding fetch failed:', err);
+          seenCoords.set(coordKey, "Unknown Location");
+        }
+      }
+
+      const suburbName = seenCoords.get(coordKey);
+      suburbCounts[suburbName] = (suburbCounts[suburbName] || 0) + 1;
+    }
+
+    const suburbArray = Object.entries(suburbCounts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    res.json({ success: true, heatData: points, suburbData: suburbArray });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, error: 'Database error' });
+  }
+});
+
 
 app.get('/getReportsadmin', async (req, res) => {
   try {
