@@ -4129,6 +4129,7 @@ app.get('/getCommunityMembers', async (req, res) => {
     });
   }
 });
+//
 app.get('/topFiveResponders', async (req, res) => {
   let pool;
   try {
@@ -4141,8 +4142,8 @@ app.get('/topFiveResponders', async (req, res) => {
           u.FullName,
           u.ProfilePhoto,
           COUNT(r.ResponseID) AS ResponseCount
-      FROM Response r
-      JOIN Users u ON r.UserID = u.UserID
+      FROM [dbo].[Response] r
+      JOIN [dbo].[Users] u ON r.UserID = u.UserID
       GROUP BY u.UserID, u.FullName, u.ProfilePhoto
       ORDER BY ResponseCount DESC;
     `);
