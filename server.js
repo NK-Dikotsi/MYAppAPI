@@ -3748,7 +3748,56 @@ app.get('/api/volunteers', async (req, res) => {
   }
 });
 
-// New endpoint to get flag counts
+// Get all misuse reports
+app.get('/api/misuses', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(`
+      SELECT 
+        mr.MisuseID,
+        mr.ReportID,
+        mr.ReportType,
+        mr.Description,
+        mr.Evidence,
+        mr.CreatedAt,
+        mr.Status,
+        reporter.FullName AS ReporterName,
+        responder.FullName AS ResponderName
+      FROM MisuseReport mr
+      INNER JOIN Users reporter ON mr.ReporterID = reporter.UserID
+      INNER JOIN Users responder ON mr.ResponderID = responder.UserID
+      ORDER BY mr.CreatedAt DESC
+    `);
+    
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching misuses:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get misuse counts per user
+app.get('/api/misuses/counts', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(`
+      SELECT ResponderID AS UserID, COUNT(*) AS misuseCount
+      FROM MisuseReport
+      GROUP BY ResponderID
+    `);
+    
+    const counts = {};
+    result.recordset.forEach(row => {
+      counts[row.UserID] = row.misuseCount;
+    });
+    
+    res.json(counts);
+  } catch (err) {
+    console.error('Error fetching misuse counts:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get flag counts for all users
 app.get('/api/flags/counts', async (req, res) => {
   try {
