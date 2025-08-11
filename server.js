@@ -4146,7 +4146,7 @@ app.get('/topFiveResponders', async (req, res) => {
     const result = await pool.request().query(query);
     res.status(200).json({ success: true, data: result.recordset });
   } catch (error) {
-    console.error("Error fetching top responders:", error);
+    console.error("Error fetching top responder:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
