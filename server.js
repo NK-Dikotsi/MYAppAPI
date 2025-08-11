@@ -2618,7 +2618,6 @@ app.get('/trusted/count', async (req, res) => {
 
 
 /************************************VOTING SYSTEM************************************** */
-// Voting settings endpoints
 // Fixed Voting settings endpoints
 app.get('/api/voting/settings', async (req, res) => {
   try {
@@ -2651,7 +2650,6 @@ app.get('/api/voting/settings', async (req, res) => {
   }
 });
 
-
 app.post('/api/voting/settings', requireAuth, async (req, res) => {
   const { votingEnabled, startDate, endDate } = req.body;
   const updatedBy = req.session.user.id;
@@ -2675,7 +2673,7 @@ app.post('/api/voting/settings', requireAuth, async (req, res) => {
   }
 });
 
-// Nomination endpoints
+// Fixed Nomination endpoints
 app.post('/api/nominations', requireAuth, async (req, res) => {
   const { nomineeUsername, message } = req.body;
   const nominatedBy = req.session.user.id;
@@ -2758,7 +2756,22 @@ app.get('/api/nominations/pending', requireAuth, async (req, res) => {
         ORDER BY n.NominatedAt DESC
       `);
 
-    res.json(result.recordset);
+    console.log('Pending nominations query result:', {
+      userId,
+      recordCount: result.recordset.length,
+      records: result.recordset
+    });
+
+    // Ensure all required fields are present and not null
+    const validRecords = result.recordset.filter(record => 
+      record.NominationID && 
+      record.NominatorName && 
+      record.NominatorUsername
+    );
+
+    console.log('Valid pending nominations:', validRecords);
+
+    res.json(validRecords);
   } catch (err) {
     console.error('Error fetching pending nominations:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -2802,6 +2815,7 @@ app.post('/api/nominations/respond', requireAuth, async (req, res) => {
   }
 });
 
+// Fixed Voting endpoints
 app.post('/api/votes', requireAuth, async (req, res) => {
   const { nominationId } = req.body;
   const voterId = req.session.user.id;
@@ -2876,7 +2890,7 @@ app.post('/api/votes', requireAuth, async (req, res) => {
   }
 });
 
-
+// Fixed Results endpoint
 app.get('/api/votes/results', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -2904,7 +2918,6 @@ app.get('/api/votes/results', async (req, res) => {
   }
 });
 
-// Current leader endpoint (now calculated from votes)
 // Fixed Current leader endpoint
 app.get('/api/leader/current', async (req, res) => {
   try {
@@ -2937,8 +2950,7 @@ app.get('/api/leader/current', async (req, res) => {
   }
 });
 
-
-
+// Fixed Current vote endpoint
 app.get('/api/votes/current', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
 
