@@ -3851,25 +3851,31 @@ app.post('/api/sleep/check-expired', async (req, res) => {
 });
 
 // Get all misuse reports
-app.get('/api/misuses', async (req, res) => {
+app.get('/api/misusesuser/:userId', async (req, res) => {
+  const userId = parseInt(req.params.userId, 10); // Get from query param
+
+    if (!userId || isNaN(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
   try {
     const pool = await sql.connect(config);
-    const result = await pool.request().query(`
-      SELECT 
-        mr.MisuseID,
-        mr.ReportID,
-        mr.ReportType,
-        mr.Description,
-        mr.Evidence,
-        mr.CreatedAt,
-        mr.Status,
-        reporter.FullName AS ReporterName,
-        responder.FullName AS ResponderName
-      FROM MisuseReport mr
-      INNER JOIN Users reporter ON mr.ReporterID = reporter.UserID
-      INNER JOIN Users responder ON mr.ResponderID = responder.UserID
-      ORDER BY mr.CreatedAt DESC
-    `);
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`
+        SELECT 
+          mr.MisuseID,
+          mr.ReportType,
+          mr.Description,
+          mr.Evidence,
+          mr.CreatedAt,
+          mr.Status,
+          reporter.FullName AS ReporterName
+        FROM MisuseReport mr
+        INNER JOIN Users reporter ON mr.ReporterID = reporter.UserID
+        WHERE mr.ResponderID = @userId
+        ORDER BY mr.CreatedAt DESC
+      `);
     
     res.json(result.recordset);
   } catch (err) {
