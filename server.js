@@ -3883,9 +3883,9 @@ app.get('/api/misuses/counts', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     const result = await pool.request().query(`
-      SELECT ResponderID AS UserID, COUNT(*) AS misuseCount
+      SELECT ReporterID AS UserID, COUNT(*) AS misuseCount
       FROM MisuseReport
-      GROUP BY ResponderID
+      GROUP BY ReporterID
     `);
     
     const counts = {};
