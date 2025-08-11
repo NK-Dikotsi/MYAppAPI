@@ -3857,7 +3857,6 @@ app.get('/api/misusesuser/:userId', async (req, res) => {
     if (!userId || isNaN(userId)) {
       return res.status(400).json({ error: 'Invalid user ID' });
     }
-
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -3870,16 +3869,18 @@ app.get('/api/misusesuser/:userId', async (req, res) => {
           mr.Evidence,
           mr.CreatedAt,
           mr.Status,
-          reporter.FullName AS ReporterName
+          responder.FullName AS ResponderName,
+          r.emerDescription AS ReportDescription
         FROM MisuseReport mr
-        INNER JOIN Users reporter ON mr.ReporterID = reporter.UserID
-        WHERE mr.ResponderID = @userId
+        INNER JOIN Users responder ON mr.ResponderID = responder.UserID
+        INNER JOIN Report r ON mr.ReportID = r.ReportID
+        WHERE mr.ReporterID = @userId
         ORDER BY mr.CreatedAt DESC
       `);
     
     res.json(result.recordset);
   } catch (err) {
-    console.error('Error fetching misuses:', err);
+    console.error('Error fetching misuses for user:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
