@@ -4852,3 +4852,125 @@ app.get('/api/analytics/funnel', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+/************************Voting Session ************************/
+
+// server.js
+
+// Get current voting settings
+app.get('/api/voting-settings', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(`
+      SELECT TOP 1 * 
+      FROM VotingSettings 
+      ORDER BY SettingID DESC
+    `);
+    
+    if (result.recordset.length > 0) {
+      res.json(result.recordset[0]);
+    } else {
+      // Return default settings if none exist
+      res.json({
+        VotingEnabled: false,
+        StartDate: new Date(),
+        EndDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+    }
+  } catch (err) {
+    console.error('Error fetching voting settings:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update voting settings
+app.put('/api/voting-settings', async (req, res) => {
+  const { VotingEnabled, StartDate, EndDate, UpdatedBy } = req.body;
+  
+  try {
+    const pool = await sql.connect(config);
+    await pool.request()
+      .input('VotingEnabled', sql.Bit, VotingEnabled)
+      .input('StartDate', sql.DateTime, new Date(StartDate))
+      .input('EndDate', sql.DateTime, new Date(EndDate))
+      .input('UpdatedBy', sql.Int, UpdatedBy)
+      .query(`
+        UPDATE VotingSettings SET
+          VotingEnabled = @VotingEnabled,
+          StartDate = @StartDate,
+          EndDate = @EndDate,
+          UpdatedBy = @UpdatedBy,
+          UpdatedAt = GETDATE()
+        WHERE SettingID = (SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC)
+        
+        IF @@ROWCOUNT = 0
+        BEGIN
+          INSERT INTO VotingSettings (
+            VotingEnabled, 
+            StartDate, 
+            EndDate, 
+            UpdatedBy,
+            UpdatedAt
+          ) VALUES (
+            @VotingEnabled,
+            @StartDate,
+            @EndDate,
+            @UpdatedBy,
+            GETDATE()
+          )
+        END
+      `);
+      
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating voting settings:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get all nominations
+app.get('/api/nominations', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(`
+      SELECT * 
+      FROM Nominations 
+      ORDER BY NominatedAt DESC
+    `);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching nominations:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get all votes
+app.get('/api/votes', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(`
+      SELECT * 
+      FROM Votes 
+      ORDER BY VotedAt DESC
+    `);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching votes:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get users (simplified version for nomination display)
+app.get('/api/users-minimal', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(`
+      SELECT UserID, FullName, Email, ProfilePhoto 
+      FROM Users
+    `);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching users:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
