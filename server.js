@@ -592,13 +592,13 @@ app.post('/addReport', async (req, res) => {
       .input('SharedWith', sql.VarChar, sharedWith)
       .input('ReportLocation', sql.VarChar, reportLocation)
       .input('ReportStatus', sql.VarChar, reportStatus)
-      .input('surburbName', sql.VarChar, suburbName)
+      .input('suburbName', sql.VarChar, suburbName)
       .query(`
                 INSERT INTO [dbo].[Report]
-                (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status, dateReported, surburbName)
+                (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status, dateReported, suburbName)
                 OUTPUT INSERTED.ReportID
                 VALUES
-                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus,dbo.GetSASTDateTime(), @surburbName)
+                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus,dbo.GetSASTDateTime(), @suburbName)
             `);
 
     const insertedReportID = result.recordset[0].ReportID;
