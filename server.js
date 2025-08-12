@@ -4218,195 +4218,90 @@ app.get('/reports/count/completed', async (req, res) => {
     });
   }
 });
+//Location thing
+const suburbBounds = [
+  { name: 'Westdene', minLat: -26.1830, maxLat: -26.1660, minLng: 27.9900, maxLng: 28.0050 },
+  { name: 'Melville', minLat: -26.1780, maxLat: -26.1570, minLng: 27.9840, maxLng: 28.0120 },
+  { name: 'Auckland Park', minLat: -26.1860, maxLat: -26.1660, minLng: 27.9740, maxLng: 27.9940 },
+  { name: 'Rossmore', minLat: -26.1890, maxLat: -26.1730, minLng: 27.9890, maxLng: 28.0070 },
+  { name: 'Hursthill', minLat: -26.1910, maxLat: -26.1780, minLng: 27.9820, maxLng: 27.9940 },
+  { name: 'Brixton', minLat: -26.2000, maxLat: -26.1800, minLng: 27.9700, maxLng: 27.9900 },
+  { name: 'Richmond', minLat: -26.1900, maxLat: -26.1740, minLng: 27.9600, maxLng: 27.9800 },
+  { name: 'Johannesburg Ward 88', minLat: -26.1700, maxLat: -26.1500, minLng: 27.9800, maxLng: 28.0000 },
+  { name: 'Johannesburg Ward 69', minLat: -26.2000, maxLat: -26.1800, minLng: 27.9600, maxLng: 27.9800 },
+  { name: 'Johannesburg Ward 87', minLat: -26.1900, maxLat: -26.1700, minLng: 27.9900, maxLng: 28.0100 }
+];
+
+function getSuburbFromCoordinates(lat, lng) {
+  for (const s of suburbBounds) {
+    if (lat >= s.minLat && lat <= s.maxLat && lng >= s.minLng && lng <= s.maxLng) {
+      return s.name;
+    }
+  }
+  return 'Unknown Area';
+}
 
 app.get('/getSuburbsByType', async (req, res) => {
   const type = req.query.type;
-
-  console.log('Received request for type:', type);
 
   if (!type) {
     return res.status(400).json({ success: false, error: 'Missing report type in query parameter' });
   }
 
   try {
-    // Test database connection first
     const pool = await sql.connect(config);
-    console.log('Database connected successfully');
-
     const request = pool.request();
     request.input("type", sql.VarChar, type);
 
-    console.log('Executing SQL query with type:', type);
-
-    // First, let's try a simpler query to see if the issue is with the table/columns
     const result = await request.query(`
-      SELECT ReportID, Report_Location 
+      SELECT ReportID, Report_Location
       FROM [dbo].[Report] 
       WHERE emergencyType = @type
     `);
 
-    console.log('Query executed successfully. Found', result.recordset.length, 'records');
-
-    if (result.recordset.length === 0) {
-      return res.status(200).json({ 
-        success: true, 
-        message: 'No reports found for this type',
-        reports: [],
-        uniqueSuburbs: [],
-        totalReports: 0,
-        uniqueSuburbCount: 0
-      });
-    }
-
-    const reportsWithSuburbs = [];
-    const suburbSet = new Set();
-    const geocodePromises = [];
-
-    // Process each report
-    for (const report of result.recordset) {
-      console.log('Processing report:', report.ReportID, 'Location:', report.Report_Location);
-      
-      // Validate location format
-      if (!report.Report_Location || typeof report.Report_Location !== 'string') {
-        console.warn('Invalid location format for report', report.ReportID);
-        const suburb = "Invalid Location";
-        suburbSet.add(suburb);
-        
-        reportsWithSuburbs.push({
-          ReportID: report.ReportID,
-          Report_Location: report.Report_Location || 'N/A',
-          suburb: suburb
-        });
-        continue;
+    const reportsWithSuburbs = result.recordset.map(report => {
+      let suburb = 'Invalid Location';
+      if (report.Report_Location && typeof report.Report_Location === 'string') {
+        const parts = report.Report_Location.split(';');
+        if (parts.length === 2) {
+          const lat = parseFloat(parts[0]);
+          const lng = parseFloat(parts[1]);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            suburb = getSuburbFromCoordinates(lat, lng);
+          }
+        }
       }
-
-      const locationParts = report.Report_Location.split(";");
-      if (locationParts.length !== 2) {
-        console.warn('Invalid location format for report', report.ReportID, '- expected lat;lng format');
-        const suburb = "Invalid Location Format";
-        suburbSet.add(suburb);
-        
-        reportsWithSuburbs.push({
-          ReportID: report.ReportID,
-          Report_Location: report.Report_Location,
-          suburb: suburb
-        });
-        continue;
-      }
-
-      const [latStr, lngStr] = locationParts;
-      const lat = parseFloat(latStr);
-      const lng = parseFloat(lngStr);
-
-      if (!isNaN(lat) && !isNaN(lng)) {
-        // Add delay to avoid rate limiting from geocoding API
-        geocodePromises.push(
-          new Promise(resolve => {
-            setTimeout(async () => {
-              try {
-                console.log(`Geocoding ${lat}, ${lng} for report ${report.ReportID}`);
-                
-                const response = await fetch(
-                  `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
-                  {
-                    headers: {
-                      //'User-Agent': 'YourAppName/1.0 (your-email@example.com)' 
-                      'User-Agent': 'EmergencyReportApp/1.0 (emergency-report@example.com)' // Add proper user agent
-                    }
-                  }
-                );
-
-                if (!response.ok) {
-                  throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-
-                const geoData = await response.json();
-                
-                const address = geoData.address || {};
-                let suburb = address.suburb || 
-                            address.neighbourhood || 
-                            address.village || 
-                            address.town || 
-                            address.city || 
-                            "Unknown Area";
-                
-                suburbSet.add(suburb);
-                
-                reportsWithSuburbs.push({
-                  ReportID: report.ReportID,
-                  Report_Location: report.Report_Location,
-                  suburb: suburb
-                });
-
-                console.log(`Successfully geocoded report ${report.ReportID} to ${suburb}`);
-                resolve();
-                
-              } catch (err) {
-                console.error("Reverse geocoding failed for report", report.ReportID, ":", err.message);
-                const suburb = "Geocoding Failed";
-                suburbSet.add(suburb);
-                
-                reportsWithSuburbs.push({
-                  ReportID: report.ReportID,
-                  Report_Location: report.Report_Location,
-                  suburb: suburb
-                });
-                resolve();
-              }
-            }, Math.random() * 1000); // Random delay 0-1 second to avoid rate limiting
-          })
-        );
-      } else {
-        console.warn('Invalid coordinates for report', report.ReportID, ':', latStr, lngStr);
-        const suburb = "Invalid Coordinates";
-        suburbSet.add(suburb);
-        
-        reportsWithSuburbs.push({
-          ReportID: report.ReportID,
-          Report_Location: report.Report_Location,
-          suburb: suburb
-        });
-      }
-    }
-
-    console.log('Waiting for all geocoding requests to complete...');
-    await Promise.all(geocodePromises);
-    console.log('All geocoding requests completed');
-
-    // Sort reports by ReportID
-    reportsWithSuburbs.sort((a, b) => a.ReportID - b.ReportID);
-
-    // Convert Set to sorted array for unique suburbs
-    const uniqueSuburbs = Array.from(suburbSet).sort();
-
-    console.log('Response ready:', {
-      totalReports: reportsWithSuburbs.length,
-      uniqueSuburbCount: uniqueSuburbs.length
+      return {
+        ReportID: report.ReportID,
+        Report_Location: report.Report_Location,
+        suburb
+      };
     });
 
-    res.status(200).json({ 
-      success: true, 
+    // Unique suburbs
+    const uniqueSuburbs = [...new Set(reportsWithSuburbs.map(r => r.suburb))];
+
+    // Count per suburb
+    const suburbCounts = {};
+    for (const r of reportsWithSuburbs) {
+      suburbCounts[r.suburb] = (suburbCounts[r.suburb] || 0) + 1;
+    }
+
+    res.status(200).json({
+      success: true,
       reports: reportsWithSuburbs,
-      uniqueSuburbs: uniqueSuburbs,
+      uniqueSuburbs,
+      suburbCounts,
       totalReports: reportsWithSuburbs.length,
       uniqueSuburbCount: uniqueSuburbs.length
     });
 
   } catch (err) {
-    console.error('Full error details:', {
-      message: err.message,
-      stack: err.stack,
-      code: err.code,
-      originalError: err.originalError
-    });
-    
-    res.status(500).json({ 
-      success: false, 
-      error: 'Database error',
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
+    console.error('Error fetching reports:', err);
+    res.status(500).json({ success: false, error: 'Database error' });
   }
 });
+
 
 //
 app.get('/getReportsByUser', async (req, res) => {
