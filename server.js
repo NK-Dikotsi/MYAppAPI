@@ -577,7 +577,7 @@ app.put('/updateUser', async (req, res) => {
 
 
 app.post('/addReport', async (req, res) => {
-  const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus } = req.body;
+  const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus, suburbName } = req.body;
 
   try {
     const pool = await sql.connect(config);
@@ -592,12 +592,13 @@ app.post('/addReport', async (req, res) => {
       .input('SharedWith', sql.VarChar, sharedWith)
       .input('ReportLocation', sql.VarChar, reportLocation)
       .input('ReportStatus', sql.VarChar, reportStatus)
+      .input('surburbName', sql.VarChar, suburbName)
       .query(`
                 INSERT INTO [dbo].[Report]
-                (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status, dateReported)
+                (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status, dateReported, surburbName)
                 OUTPUT INSERTED.ReportID
                 VALUES
-                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus,dbo.GetSASTDateTime())
+                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus,dbo.GetSASTDateTime(), @surburbName)
             `);
 
     const insertedReportID = result.recordset[0].ReportID;
