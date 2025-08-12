@@ -4892,6 +4892,50 @@ app.get('/api/analytics/funnel', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Broadcast Message Analytics
+app.get('/api/analytics/messages', async (req, res) => {
+  try {
+    const { timeFrame = 'month' } = req.query;
+    const { start, end } = getDateRange(timeFrame);
+    const pool = await sql.connect(config);
+
+    const query = `
+      SELECT 
+        (SELECT COUNT(*) FROM Messages 
+         WHERE ChannelID = 1
+         AND SentAt BETWEEN '${start}' AND '${end}') AS total,
+        
+        (SELECT COUNT(*) FROM Messages m
+         LEFT JOIN FlaggedMessages fm ON m.MessageID = fm.MessageID
+         WHERE m.ChannelID = 1
+         AND m.SentAt BETWEEN '${start}' AND '${end}'
+         AND fm.FlagID IS NULL) AS unflagged,
+        
+        (SELECT COUNT(DISTINCT fm.MessageID) 
+         FROM FlaggedMessages fm
+         JOIN Messages m ON fm.MessageID = m.MessageID
+         WHERE m.ChannelID = 1
+         AND m.SentAt BETWEEN '${start}' AND '${end}') AS flagged
+    `;
+
+    const result = await pool.request().query(query);
+    const row = result.recordset[0];
+
+    res.json({
+      total: row.total || 0,
+      unflagged: row.unflagged || 0,
+      flagged: row.flagged || 0
+    });
+  } catch (err) {
+    console.error('Error fetching message analytics:', err);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: err.message
+    });
+  }
+});
+
 /************************Voting Session ************************/
 
 // server.js
