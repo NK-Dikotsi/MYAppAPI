@@ -3033,7 +3033,7 @@ async function updateSuburbs() {
         
         for (const report of reports.recordset) {
             try {
-                const [lat, lng] = report.Report_Location.split(",").map(v => v.trim());
+                const [lat, lng] = report.Report_Location.split(";").map(v => v.trim());
                 
                 if (!lat || !lng) {
                     result.errors.push(`Invalid coordinates for ReportID ${report.ReportID}: ${report.Report_Location}`);
