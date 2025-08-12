@@ -5011,14 +5011,21 @@ app.put('/api/voting-settings', async (req, res) => {
   }
 });
 
-// Get all nominations
+// Get all nominations with vote counts
 app.get('/api/nominations', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     const result = await pool.request().query(`
-      SELECT * 
-      FROM Nominations 
-      ORDER BY NominatedAt DESC
+      SELECT 
+        n.*,
+        COALESCE(v.VoteCount, 0) AS VoteCount
+      FROM Nominations n
+      LEFT JOIN (
+        SELECT NomineeID, COUNT(*) AS VoteCount
+        FROM Votes
+        GROUP BY NomineeID
+      ) v ON n.NomineeID = v.NomineeID
+      ORDER BY n.NominatedAt DESC
     `);
     res.json(result.recordset);
   } catch (err) {
