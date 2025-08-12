@@ -4989,7 +4989,9 @@ app.get('/api/votes/count', async (req, res) => {
     
     const counts = {};
     result.recordset.forEach(row => {
-      counts[row.NomineeID] = row.VoteCount;
+      // Convert NomineeID to integer
+      const nomineeId = parseInt(row.NomineeID, 10);
+      counts[nomineeId] = row.VoteCount;
     });
     
     res.json(counts);
