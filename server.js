@@ -1256,7 +1256,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
     // Perform content analysis in background - DON'T BLOCK THE RESPONSE
     // Use setImmediate to ensure this runs after the response is sent
     setImmediate(async () => {
-
+      
       try {
         console.log(`Starting background analysis for message ${result.recordset[0].MessageID}`);
 
@@ -1282,12 +1282,12 @@ app.post('/api/messages', requireAuth, async (req, res) => {
               VALUES (@MessageID, @UserID, @Reason)
             `);
 
-          // Create notification for admins
+            // Create notification for admins
           try {
             // Get all Leaders
             const admins = await backgroundPool.request()
               .query("SELECT UserID FROM CommunityMember WHERE UserType = 'CommunityLeader'");
-
+            
             if (admins.recordset.length > 0) {
               // Create notification
               const notifResult = await backgroundPool.request()
@@ -1302,14 +1302,14 @@ app.post('/api/messages', requireAuth, async (req, res) => {
                   OUTPUT INSERTED.NotificationID
                   VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
                 `);
-
+              
               const notificationId = notifResult.recordset[0].NotificationID;
-
+              
               // Add recipients
-              const values = admins.recordset.map(admin =>
+              const values = admins.recordset.map(admin => 
                 `(${notificationId}, ${admin.UserID})`
               ).join(',');
-
+              
               await backgroundPool.request().query(`
                 INSERT INTO NotificationRecipients (NotificationID, UserID)
                 VALUES ${values}
@@ -2624,7 +2624,7 @@ app.get('/api/voting/settings', async (req, res) => {
     const pool = await sql.connect(config);
     const result = await pool.request()
       .query('SELECT TOP 1 * FROM VotingSettings ORDER BY SettingID DESC');
-
+    
     // Return defaults if no settings exist
     if (result.recordset.length === 0) {
       return res.json({
@@ -2642,7 +2642,7 @@ app.get('/api/voting/settings', async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching voting settings:', err);
-    res.status(500).json({
+    res.status(500).json({ 
       votingEnabled: false,
       startDate: null,
       endDate: null
@@ -2725,7 +2725,7 @@ app.post('/api/nominations', requireAuth, async (req, res) => {
         VALUES (@NomineeID, @NominatedBy, @Message)
       `);
 
-    res.status(201).json({
+    res.status(201).json({ 
       success: true,
       nominationId: result.recordset[0].NominationID
     });
@@ -2763,9 +2763,9 @@ app.get('/api/nominations/pending', requireAuth, async (req, res) => {
     });
 
     // Ensure all required fields are present and not null
-    const validRecords = result.recordset.filter(record =>
-      record.NominationID &&
-      record.NominatorName &&
+    const validRecords = result.recordset.filter(record => 
+      record.NominationID && 
+      record.NominatorName && 
       record.NominatorUsername
     );
 
@@ -2831,9 +2831,9 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     // Check if voting is enabled and within period
     const settings = await pool.request()
       .query('SELECT TOP 1 VotingEnabled, StartDate, EndDate FROM VotingSettings ORDER BY SettingID DESC');
-
+    
     const votingSettings = settings.recordset[0] || { VotingEnabled: false };
-
+    
     if (!votingSettings.VotingEnabled) {
       return res.status(403).json({ error: 'Voting is not currently enabled' });
     }
@@ -2843,7 +2843,7 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     if (votingSettings.StartDate && new Date(votingSettings.StartDate) > now) {
       return res.status(403).json({ error: 'Voting has not started yet' });
     }
-
+    
     if (votingSettings.EndDate && new Date(votingSettings.EndDate) < now) {
       return res.status(403).json({ error: 'Voting has ended' });
     }
@@ -2999,158 +2999,197 @@ let isUpdateRunning = false;
 let lastUpdateResult = null;
 
 async function updateSuburbs() {
-  let pool;
-  const startTime = Date.now();
-  const result = {
-    success: false,
-    message: "",
-    processed: 0,
-    updated: 0,
-    errors: [],
-    duration: 0,
-    timestamp: new Date().toISOString()
-  };
+    let pool;
+    const startTime = Date.now();
+    const result = {
+        success: false,
+        message: "",
+        processed: 0,
+        updated: 0,
+        errors: [],
+        duration: 0,
+        timestamp: new Date().toISOString()
+    };
 
-  try {
-    pool = await sql.connect(config);
-
-    // Step 1: Get all reports that need suburb updates
-    console.log("Fetching reports that need suburb updates...");
-    const reports = await pool.request()
-      .query(`SELECT ReportID, Report_Location FROM Report WHERE surburbName IS NULL OR surburbName = ''`);
-
-    if (reports.recordset.length === 0) {
-      result.success = true;
-      result.message = "No reports need suburb updates.";
-      return result;
-    }
-
-    console.log(`Found ${reports.recordset.length} reports to process.`);
-    result.processed = reports.recordset.length;
-
-    // Step 2: Process all locations and store results in memory
-    const suburbUpdates = new Map(); // ReportID -> suburb name
-
-    for (const report of reports.recordset) {
-      try {
-        const [lat, lng] = report.Report_Location.split(",").map(v => v.trim());
-
-        if (!lat || !lng) {
-          result.errors.push(`Invalid coordinates for ReportID ${report.ReportID}: ${report.Report_Location}`);
-          continue;
+    try {
+        pool = await sql.connect(config);
+        
+        // Step 1: Get all reports that need suburb updates
+        console.log("Fetching reports that need suburb updates...");
+        const reports = await pool.request()
+            .query(`SELECT ReportID, Report_Location FROM Report WHERE suburbName IS NULL OR suburbName = ''`);
+        
+        if (reports.recordset.length === 0) {
+            result.success = true;
+            result.message = "No reports need suburb updates.";
+            return result;
         }
-
-        const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&zoom=18`;
-
-        const response = await fetch(url, {
-          headers: { "User-Agent": "SizaCommunityWatch/1.0" }
-        });
-
-        if (!response.ok) {
-          throw new Error(`API responded with status: ${response.status}`);
+        
+        console.log(`Found ${reports.recordset.length} reports to process.`);
+        result.processed = reports.recordset.length;
+        
+        // Step 2: Process all locations and store results in memory
+        const suburbUpdates = new Map(); // ReportID -> suburb name
+        
+        for (const report of reports.recordset) {
+            try {
+                const [lat, lng] = report.Report_Location.split(",").map(v => v.trim());
+                
+                if (!lat || !lng) {
+                    result.errors.push(`Invalid coordinates for ReportID ${report.ReportID}: ${report.Report_Location}`);
+                    continue;
+                }
+                
+                const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&zoom=18`;
+                
+                const response = await fetch(url, {
+                    headers: { "User-Agent": "SizaCommunityWatch/1.0" }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`API responded with status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                const suburb = data.address?.suburb || data.address?.neighbourhood || null;
+                
+                if (suburb) {
+                    suburbUpdates.set(report.ReportID, suburb);
+                    console.log(`✓ ReportID ${report.ReportID}: ${suburb}`);
+                } else {
+                    console.log(`✗ ReportID ${report.ReportID}: No suburb found`);
+                }
+                
+                // Respect API rate limit (1 request per second maximum)
+                await new Promise(resolve => setTimeout(resolve, 1100));
+                
+            } catch (error) {
+                const errorMsg = `Error processing ReportID ${report.ReportID}: ${error.message}`;
+                console.error(errorMsg);
+                result.errors.push(errorMsg);
+            }
         }
-
-        const data = await response.json();
-        const suburb = data.address?.suburb || data.address?.neighbourhood || null;
-
-        if (suburb) {
-          suburbUpdates.set(report.ReportID, suburb);
-          console.log(`✓ ReportID ${report.ReportID}: ${suburb}`);
-        } else {
-          console.log(`✗ ReportID ${report.ReportID}: No suburb found`);
+        
+        // Step 3: Update all records in one SQL query
+        if (suburbUpdates.size === 0) {
+            result.success = true;
+            result.message = "No suburb data found for any reports.";
+            return result;
         }
-
-        // Respect API rate limit (1 request per second maximum)
-        await new Promise(resolve => setTimeout(resolve, 1100));
-
-      } catch (error) {
-        const errorMsg = `Error processing ReportID ${report.ReportID}: ${error.message}`;
-        console.error(errorMsg);
-        result.errors.push(errorMsg);
-      }
-    }
-
-    // Step 3: Update all records in one SQL query
-    if (suburbUpdates.size === 0) {
-      result.success = true;
-      result.message = "No suburb data found for any reports.";
-      return result;
-    }
-
-    console.log(`\nUpdating ${suburbUpdates.size} records in database...`);
-
-    // Build the bulk update query using CASE statements
-    const caseWhenStatements = Array.from(suburbUpdates.entries())
-      .map(([reportId, suburb]) => `WHEN ${reportId} THEN '${suburb.replace(/'/g, "''")}'`)
-      .join('\n            ');
-
-    const reportIds = Array.from(suburbUpdates.keys()).join(',');
-
-    const bulkUpdateQuery = `
+        
+        console.log(`\nUpdating ${suburbUpdates.size} records in database...`);
+        
+        // Build the bulk update query using CASE statements
+        const caseWhenStatements = Array.from(suburbUpdates.entries())
+            .map(([reportId, suburb]) => `WHEN ${reportId} THEN '${suburb.replace(/'/g, "''")}'`)
+            .join('\n            ');
+        
+        const reportIds = Array.from(suburbUpdates.keys()).join(',');
+        
+        const bulkUpdateQuery = `
             UPDATE Report 
-            SET surburbName = CASE ReportID 
+            SET suburbName = CASE ReportID 
                 ${caseWhenStatements}
             END 
             WHERE ReportID IN (${reportIds})
         `;
-
-    const updateResult = await pool.request().query(bulkUpdateQuery);
-
-    result.updated = updateResult.rowsAffected[0];
-    result.success = true;
-    result.message = `Successfully updated ${result.updated} records in database.`;
-
-    console.log(`✓ ${result.message}`);
-
-  } catch (err) {
-    console.error("Fatal error:", err);
-    result.success = false;
-    result.message = `Fatal error: ${err.message}`;
-    result.errors.push(err.message);
-  } finally {
-    if (pool) {
-      await pool.close();
+        
+        const updateResult = await pool.request().query(bulkUpdateQuery);
+        
+        result.updated = updateResult.rowsAffected[0];
+        result.success = true;
+        result.message = `Successfully updated ${result.updated} records in database.`;
+        
+        console.log(`✓ ${result.message}`);
+        
+    } catch (err) {
+        console.error("Fatal error:", err);
+        result.success = false;
+        result.message = `Fatal error: ${err.message}`;
+        result.errors.push(err.message);
+    } finally {
+        if (pool) {
+            await pool.close();
+        }
+        result.duration = Date.now() - startTime;
     }
-    result.duration = Date.now() - startTime;
-  }
-
-  return result;
+    
+    return result;
 }
 
 // API Endpoints
 
 // GET endpoint to trigger suburb update
 app.get('/api/update-suburbs', async (req, res) => {
-  try {
-    // Check if update is already running
-    if (isUpdateRunning) {
-      return res.status(409).json({
-        success: false,
-        message: "Suburb update is already running. Please wait for it to complete.",
-        isRunning: true
-      });
+    try {
+        // Check if update is already running
+        if (isUpdateRunning) {
+            return res.status(409).json({
+                success: false,
+                message: "Suburb update is already running. Please wait for it to complete.",
+                isRunning: true
+            });
+        }
+        
+        isUpdateRunning = true;
+        
+        console.log("Starting suburb update process...");
+        const result = await updateSuburbs();
+        
+        // Store the result for status checking
+        lastUpdateResult = result;
+        
+        res.json(result);
+        
+    } catch (error) {
+        console.error("Endpoint error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Internal server error",
+            error: error.message
+        });
+    } finally {
+        isUpdateRunning = false;
     }
+});
 
-    isUpdateRunning = true;
-
-    console.log("Starting suburb update process...");
-    const result = await updateSuburbs();
-
-    // Store the result for status checking
-    lastUpdateResult = result;
-
-    res.json(result);
-
-  } catch (error) {
-    console.error("Endpoint error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message
+// GET endpoint to check update status
+app.get('/api/update-suburbs/status', (req, res) => {
+    res.json({
+        isRunning: isUpdateRunning,
+        lastUpdate: lastUpdateResult
     });
-  } finally {
-    isUpdateRunning = false;
-  }
+});
+
+// POST endpoint for programmatic access (same functionality)
+app.post('/api/update-suburbs', async (req, res) => {
+    try {
+        if (isUpdateRunning) {
+            return res.status(409).json({
+                success: false,
+                message: "Suburb update is already running. Please wait for it to complete.",
+                isRunning: true
+            });
+        }
+        
+        isUpdateRunning = true;
+        
+        console.log("Starting suburb update process via POST...");
+        const result = await updateSuburbs();
+        
+        lastUpdateResult = result;
+        res.json(result);
+        
+    } catch (error) {
+        console.error("Endpoint error:", error);
+        res.status(500).json({
+            success: false,
+            message: "Internal server error",
+            error: error.message
+        });
+    } finally {
+        isUpdateRunning = false;
+    }
 });
 
 
@@ -3547,11 +3586,11 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
     setImmediate(async () => {
       try {
         const bgPool = await sql.connect(config);
-
+        
         // Get community leaders
         const leaders = await bgPool.request()
           .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
-
+        
         if (leaders.recordset.length > 0) {
           // Create notification
           const notifResult = await bgPool.request()
@@ -3566,14 +3605,14 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
               OUTPUT INSERTED.NotificationID
               VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
             `);
-
+          
           const notificationId = notifResult.recordset[0].NotificationID;
-
+          
           // Add recipients
-          const values = leaders.recordset.map(leader =>
+          const values = leaders.recordset.map(leader => 
             `(${notificationId}, ${leader.UserID})`
           ).join(',');
-
+          
           await bgPool.request().query(`
             INSERT INTO NotificationRecipients (NotificationID, UserID)
             VALUES ${values}
@@ -3706,11 +3745,11 @@ app.patch('/api/messages/:messageId/disable', async (req, res) => {
     const messageResult = await pool.request()
       .input('MessageID', sql.Int, messageId)
       .query('SELECT Content, SenderID FROM Messages WHERE MessageID = @MessageID');
-
+    
     if (messageResult.recordset.length === 0) {
       return res.status(404).json({ error: 'Message not found' });
     }
-
+    
     const content = messageResult.recordset[0].Content;
     const senderId = messageResult.recordset[0].SenderID;
 
@@ -3722,7 +3761,7 @@ app.patch('/api/messages/:messageId/disable', async (req, res) => {
     // Create notification for community leaders
     const leaders = await pool.request()
       .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
-
+    
     if (leaders.recordset.length > 0) {
       // Create notification
       const notifResult = await pool.request()
@@ -3737,14 +3776,14 @@ app.patch('/api/messages/:messageId/disable', async (req, res) => {
           OUTPUT INSERTED.NotificationID
           VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
         `);
-
+      
       const notificationId = notifResult.recordset[0].NotificationID;
-
+      
       // Add recipients
-      const values = leaders.recordset.map(leader =>
+      const values = leaders.recordset.map(leader => 
         `(${notificationId}, ${leader.UserID})`
       ).join(',');
-
+      
       await pool.request().query(`
         INSERT INTO NotificationRecipients (NotificationID, UserID)
         VALUES ${values}
@@ -3767,11 +3806,11 @@ app.patch('/api/messages/:messageId/restore', async (req, res) => {
     const messageResult = await pool.request()
       .input('MessageID', sql.Int, messageId)
       .query('SELECT Content, SenderID FROM Messages WHERE MessageID = @MessageID');
-
+    
     if (messageResult.recordset.length === 0) {
       return res.status(404).json({ error: 'Message not found' });
     }
-
+    
     const content = messageResult.recordset[0].Content;
     const senderId = messageResult.recordset[0].SenderID;
 
@@ -3783,7 +3822,7 @@ app.patch('/api/messages/:messageId/restore', async (req, res) => {
     // Create notification for community leaders
     const leaders = await pool.request()
       .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
-
+    
     if (leaders.recordset.length > 0) {
       // Create notification
       const notifResult = await pool.request()
@@ -3798,14 +3837,14 @@ app.patch('/api/messages/:messageId/restore', async (req, res) => {
           OUTPUT INSERTED.NotificationID
           VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
         `);
-
+      
       const notificationId = notifResult.recordset[0].NotificationID;
-
+      
       // Add recipients
-      const values = leaders.recordset.map(leader =>
+      const values = leaders.recordset.map(leader => 
         `(${notificationId}, ${leader.UserID})`
       ).join(',');
-
+      
       await pool.request().query(`
         INSERT INTO NotificationRecipients (NotificationID, UserID)
         VALUES ${values}
@@ -3998,15 +4037,15 @@ app.get('/api/volunteers', async (req, res) => {
 app.post('/api/sleep/check-expired', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-
+    
     const result = await pool.request().query(`
       UPDATE Sleep 
       SET OnBreak = 'No'
       OUTPUT INSERTED.UserID
       WHERE OnBreak = 'Yes' AND EndTime <= dbo.GetSASTDateTime()
     `);
-
-    res.json({
+    
+    res.json({ 
       updatedUsers: result.recordset.map(row => row.UserID),
       message: `${result.rowsAffected} users reactivated`
     });
@@ -4020,9 +4059,9 @@ app.post('/api/sleep/check-expired', async (req, res) => {
 app.get('/api/misuses/user/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId, 10); // Get from query param
 
-  if (!userId || isNaN(userId)) {
-    return res.status(400).json({ error: 'Invalid user ID' });
-  }
+    if (!userId || isNaN(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -4043,7 +4082,7 @@ app.get('/api/misuses/user/:userId', async (req, res) => {
         WHERE mr.ReporterID = @userId
         ORDER BY mr.CreatedAt DESC
       `);
-
+    
     res.json(result.recordset);
   } catch (err) {
     console.error('Error fetching misuses for user:', err);
@@ -4060,12 +4099,12 @@ app.get('/api/misuses/counts', async (req, res) => {
       FROM MisuseReport
       GROUP BY ReporterID
     `);
-
+    
     const counts = {};
     result.recordset.forEach(row => {
       counts[row.UserID] = row.misuseCount;
     });
-
+    
     res.json(counts);
   } catch (err) {
     console.error('Error fetching misuse counts:', err);
@@ -4077,9 +4116,9 @@ app.get('/api/misuses/counts', async (req, res) => {
 app.get('/api/flags/user/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId, 10); // Get from query param
 
-  if (!userId || isNaN(userId)) {
-    return res.status(400).json({ error: 'Invalid user ID' });
-  }
+    if (!userId || isNaN(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -4096,7 +4135,7 @@ app.get('/api/flags/user/:userId', async (req, res) => {
         WHERE fm.UserID = @userId
         ORDER BY fm.FlaggedAt DESC
       `);
-
+    
     res.json(result.recordset);
   } catch (err) {
     console.error('Error fetching flags for user:', err);
@@ -4302,7 +4341,7 @@ app.get('/topFiveResponders', async (req, res) => {
   try {
 
     pool = await sql.connect(config);
-
+    
     const result = await pool.request().query(`
       SELECT TOP 5
           u.UserID,
@@ -4657,26 +4696,26 @@ const createNotification = async (type, entityType, entityId, title, message, me
 // Add recipients to notification
 const addNotificationRecipients = async (notificationId, userIds) => {
   if (userIds.length === 0) return;
-
+  
   try {
     const pool = await sql.connect(config);
     const request = pool.request();
-
+    
     // Build dynamic query
     let query = `
       INSERT INTO NotificationRecipients (NotificationID, UserID, IsRead)
       VALUES 
     `;
-
+    
     const values = [];
     userIds.forEach((userId, index) => {
       values.push(`(@NotificationID, @UserID${index}, 0)`);
       request.input(`UserID${index}`, sql.Int, userId);
     });
-
+    
     query += values.join(',');
     request.input('NotificationID', sql.Int, notificationId);
-
+    
     await request.query(query);
   } catch (err) {
     console.error('Error adding recipients:', err);
@@ -4763,7 +4802,7 @@ function getDateRange(timeFrame) {
       start.setDate(now.getDate() - 1);
       break;
     case 'week':
-      start.setDate(now.getDate() - 7);
+      start.setDate(now.getDate()- 7);
       break;
     case 'month':
       start.setMonth(now.getMonth() - 1);
