@@ -2968,31 +2968,6 @@ app.get('/api/leader/current', async (req, res) => {
   }
 });
 
-// Fixed Current vote endpoint
-app.get('/api/votes/current', requireAuth, async (req, res) => {
-  const userId = req.session.user.id;
-
-  try {
-    const pool = await sql.connect(config);
-    const result = await pool.request()
-      .input('UserID', sql.Int, userId)
-      .query(`
-        SELECT v.NomineeID as nominationId 
-        FROM Votes v
-        WHERE v.VoterID = @UserID
-      `);
-
-    if (result.recordset.length > 0) {
-      res.json({ vote: result.recordset[0] });
-    } else {
-      res.json({ vote: null });
-    }
-  } catch (err) {
-    console.error('Error fetching current vote:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
 
 // Track if update is currently running
 let isUpdateRunning = false;
@@ -3035,7 +3010,7 @@ async function updateSuburbs() {
             try {
                 const [lat, lng] = report.Report_Location.split(";").map(v => v.trim());
                 
-                if (!lat || !lng) {
+                if (!lat || !lng || isNaN(parseFloat(lat)) || isNaN(parseFloat(lng))) {
                     result.errors.push(`Invalid coordinates for ReportID ${report.ReportID}: ${report.Report_Location}`);
                     continue;
                 }
@@ -3139,45 +3114,6 @@ app.get('/api/update-suburbs', async (req, res) => {
         // Store the result for status checking
         lastUpdateResult = result;
         
-        res.json(result);
-        
-    } catch (error) {
-        console.error("Endpoint error:", error);
-        res.status(500).json({
-            success: false,
-            message: "Internal server error",
-            error: error.message
-        });
-    } finally {
-        isUpdateRunning = false;
-    }
-});
-
-// GET endpoint to check update status
-app.get('/api/update-suburbs/status', (req, res) => {
-    res.json({
-        isRunning: isUpdateRunning,
-        lastUpdate: lastUpdateResult
-    });
-});
-
-// POST endpoint for programmatic access (same functionality)
-app.post('/api/update-suburbs', async (req, res) => {
-    try {
-        if (isUpdateRunning) {
-            return res.status(409).json({
-                success: false,
-                message: "Suburb update is already running. Please wait for it to complete.",
-                isRunning: true
-            });
-        }
-        
-        isUpdateRunning = true;
-        
-        console.log("Starting suburb update process via POST...");
-        const result = await updateSuburbs();
-        
-        lastUpdateResult = result;
         res.json(result);
         
     } catch (error) {
