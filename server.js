@@ -4975,3 +4975,26 @@ app.get('/api/users-minimal', async (req, res) => {
   }
 });
 
+// Get vote counts by nominee
+app.get('/api/votes/count', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(`
+      SELECT 
+        NomineeID,
+        COUNT(*) AS VoteCount
+      FROM Votes
+      GROUP BY NomineeID
+    `);
+    
+    const counts = {};
+    result.recordset.forEach(row => {
+      counts[row.NomineeID] = row.VoteCount;
+    });
+    
+    res.json(counts);
+  } catch (err) {
+    console.error('Error fetching vote counts:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
