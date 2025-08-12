@@ -577,12 +577,50 @@ app.put('/updateUser', async (req, res) => {
 
 
 app.post('/addReport', async (req, res) => {
-  const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus, suburbName } = req.body;
+  const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus } = req.body;
+  let suburbName = ""; // use let so you can assign below
+
+  try {
+    const [lat, lon] = reportLocation.split(';'); // split by semicolon, adjust if needed
+
+    if (!lat || !lon) {
+      throw new Error('Invalid reportLocation format');
+    }
+
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1&zoom=18`,
+      {
+        headers: {
+          "User-Agent": "EmergencyReportApp/1.0 (emergency-report@example.com)",
+        },
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // Extract suburb with fallback
+    suburbName =
+      data?.address?.suburb ||
+      data?.address?.neighbourhood ||
+      data?.address?.city ||
+      data?.address?.town ||
+      data?.address?.village ||
+      "Unknown";
+
+  } catch (error) {
+    console.error('Reverse geocoding failed:', error);
+    // You can decide how to handle this:
+    // For example, send error response or continue with suburbName = "Unknown"
+    // return res.status(400).json({ message: 'Invalid location data' });
+    suburbName = "Unknown";
+  }
 
   try {
     const pool = await sql.connect(config);
 
-    // Assign the query result to `result`
     const result = await pool.request()
       .input('ReporterID', sql.Int, reporterID)
       .input('EmergencyType', sql.VarChar, emergencyType)
@@ -594,12 +632,12 @@ app.post('/addReport', async (req, res) => {
       .input('ReportStatus', sql.VarChar, reportStatus)
       .input('suburbName', sql.VarChar, suburbName)
       .query(`
-                INSERT INTO [dbo].[Report]
-                (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status, dateReported, suburbName)
-                OUTPUT INSERTED.ReportID
-                VALUES
-                (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus,dbo.GetSASTDateTime(), @suburbName)
-            `);
+        INSERT INTO [dbo].[Report]
+        (ReporterID, emergencyType, emerDescription, media_Photo, media_Voice, sharedWith, Report_Location, Report_Status, dateReported, suburbName)
+        OUTPUT INSERTED.ReportID
+        VALUES
+        (@ReporterID, @EmergencyType, @EmerDescription, @MediaPhoto, @MediaVoice, @SharedWith, @ReportLocation, @ReportStatus, dbo.GetSASTDateTime(), @suburbName)
+      `);
 
     const insertedReportID = result.recordset[0].ReportID;
 
@@ -612,6 +650,7 @@ app.post('/addReport', async (req, res) => {
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
+
 
 
 app.post('/addTrustedContact', async (req, res) => {
@@ -1257,7 +1296,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
     // Perform content analysis in background - DON'T BLOCK THE RESPONSE
     // Use setImmediate to ensure this runs after the response is sent
     setImmediate(async () => {
-      
+
       try {
         console.log(`Starting background analysis for message ${result.recordset[0].MessageID}`);
 
@@ -1283,12 +1322,12 @@ app.post('/api/messages', requireAuth, async (req, res) => {
               VALUES (@MessageID, @UserID, @Reason)
             `);
 
-            // Create notification for admins
+          // Create notification for admins
           try {
             // Get all Leaders
             const admins = await backgroundPool.request()
               .query("SELECT UserID FROM CommunityMember WHERE UserType = 'CommunityLeader'");
-            
+
             if (admins.recordset.length > 0) {
               // Create notification
               const notifResult = await backgroundPool.request()
@@ -1303,14 +1342,14 @@ app.post('/api/messages', requireAuth, async (req, res) => {
                   OUTPUT INSERTED.NotificationID
                   VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
                 `);
-              
+
               const notificationId = notifResult.recordset[0].NotificationID;
-              
+
               // Add recipients
-              const values = admins.recordset.map(admin => 
+              const values = admins.recordset.map(admin =>
                 `(${notificationId}, ${admin.UserID})`
               ).join(',');
-              
+
               await backgroundPool.request().query(`
                 INSERT INTO NotificationRecipients (NotificationID, UserID)
                 VALUES ${values}
@@ -2625,7 +2664,7 @@ app.get('/api/voting/settings', async (req, res) => {
     const pool = await sql.connect(config);
     const result = await pool.request()
       .query('SELECT TOP 1 * FROM VotingSettings ORDER BY SettingID DESC');
-    
+
     // Return defaults if no settings exist
     if (result.recordset.length === 0) {
       return res.json({
@@ -2643,7 +2682,7 @@ app.get('/api/voting/settings', async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching voting settings:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       votingEnabled: false,
       startDate: null,
       endDate: null
@@ -2726,7 +2765,7 @@ app.post('/api/nominations', requireAuth, async (req, res) => {
         VALUES (@NomineeID, @NominatedBy, @Message)
       `);
 
-    res.status(201).json({ 
+    res.status(201).json({
       success: true,
       nominationId: result.recordset[0].NominationID
     });
@@ -2764,9 +2803,9 @@ app.get('/api/nominations/pending', requireAuth, async (req, res) => {
     });
 
     // Ensure all required fields are present and not null
-    const validRecords = result.recordset.filter(record => 
-      record.NominationID && 
-      record.NominatorName && 
+    const validRecords = result.recordset.filter(record =>
+      record.NominationID &&
+      record.NominatorName &&
       record.NominatorUsername
     );
 
@@ -2832,9 +2871,9 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     // Check if voting is enabled and within period
     const settings = await pool.request()
       .query('SELECT TOP 1 VotingEnabled, StartDate, EndDate FROM VotingSettings ORDER BY SettingID DESC');
-    
+
     const votingSettings = settings.recordset[0] || { VotingEnabled: false };
-    
+
     if (!votingSettings.VotingEnabled) {
       return res.status(403).json({ error: 'Voting is not currently enabled' });
     }
@@ -2844,7 +2883,7 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     if (votingSettings.StartDate && new Date(votingSettings.StartDate) > now) {
       return res.status(403).json({ error: 'Voting has not started yet' });
     }
-    
+
     if (votingSettings.EndDate && new Date(votingSettings.EndDate) < now) {
       return res.status(403).json({ error: 'Voting has ended' });
     }
@@ -3364,11 +3403,11 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
     setImmediate(async () => {
       try {
         const bgPool = await sql.connect(config);
-        
+
         // Get community leaders
         const leaders = await bgPool.request()
           .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
-        
+
         if (leaders.recordset.length > 0) {
           // Create notification
           const notifResult = await bgPool.request()
@@ -3383,14 +3422,14 @@ app.post('/api/channels/:channelId/messages', async (req, res) => {
               OUTPUT INSERTED.NotificationID
               VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
             `);
-          
+
           const notificationId = notifResult.recordset[0].NotificationID;
-          
+
           // Add recipients
-          const values = leaders.recordset.map(leader => 
+          const values = leaders.recordset.map(leader =>
             `(${notificationId}, ${leader.UserID})`
           ).join(',');
-          
+
           await bgPool.request().query(`
             INSERT INTO NotificationRecipients (NotificationID, UserID)
             VALUES ${values}
@@ -3523,11 +3562,11 @@ app.patch('/api/messages/:messageId/disable', async (req, res) => {
     const messageResult = await pool.request()
       .input('MessageID', sql.Int, messageId)
       .query('SELECT Content, SenderID FROM Messages WHERE MessageID = @MessageID');
-    
+
     if (messageResult.recordset.length === 0) {
       return res.status(404).json({ error: 'Message not found' });
     }
-    
+
     const content = messageResult.recordset[0].Content;
     const senderId = messageResult.recordset[0].SenderID;
 
@@ -3539,7 +3578,7 @@ app.patch('/api/messages/:messageId/disable', async (req, res) => {
     // Create notification for community leaders
     const leaders = await pool.request()
       .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
-    
+
     if (leaders.recordset.length > 0) {
       // Create notification
       const notifResult = await pool.request()
@@ -3554,14 +3593,14 @@ app.patch('/api/messages/:messageId/disable', async (req, res) => {
           OUTPUT INSERTED.NotificationID
           VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
         `);
-      
+
       const notificationId = notifResult.recordset[0].NotificationID;
-      
+
       // Add recipients
-      const values = leaders.recordset.map(leader => 
+      const values = leaders.recordset.map(leader =>
         `(${notificationId}, ${leader.UserID})`
       ).join(',');
-      
+
       await pool.request().query(`
         INSERT INTO NotificationRecipients (NotificationID, UserID)
         VALUES ${values}
@@ -3584,11 +3623,11 @@ app.patch('/api/messages/:messageId/restore', async (req, res) => {
     const messageResult = await pool.request()
       .input('MessageID', sql.Int, messageId)
       .query('SELECT Content, SenderID FROM Messages WHERE MessageID = @MessageID');
-    
+
     if (messageResult.recordset.length === 0) {
       return res.status(404).json({ error: 'Message not found' });
     }
-    
+
     const content = messageResult.recordset[0].Content;
     const senderId = messageResult.recordset[0].SenderID;
 
@@ -3600,7 +3639,7 @@ app.patch('/api/messages/:messageId/restore', async (req, res) => {
     // Create notification for community leaders
     const leaders = await pool.request()
       .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
-    
+
     if (leaders.recordset.length > 0) {
       // Create notification
       const notifResult = await pool.request()
@@ -3615,14 +3654,14 @@ app.patch('/api/messages/:messageId/restore', async (req, res) => {
           OUTPUT INSERTED.NotificationID
           VALUES (@NotificationType, @EntityType, @EntityID, @Title, @Message)
         `);
-      
+
       const notificationId = notifResult.recordset[0].NotificationID;
-      
+
       // Add recipients
-      const values = leaders.recordset.map(leader => 
+      const values = leaders.recordset.map(leader =>
         `(${notificationId}, ${leader.UserID})`
       ).join(',');
-      
+
       await pool.request().query(`
         INSERT INTO NotificationRecipients (NotificationID, UserID)
         VALUES ${values}
@@ -3815,15 +3854,15 @@ app.get('/api/volunteers', async (req, res) => {
 app.post('/api/sleep/check-expired', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     const result = await pool.request().query(`
       UPDATE Sleep 
       SET OnBreak = 'No'
       OUTPUT INSERTED.UserID
       WHERE OnBreak = 'Yes' AND EndTime <= dbo.GetSASTDateTime()
     `);
-    
-    res.json({ 
+
+    res.json({
       updatedUsers: result.recordset.map(row => row.UserID),
       message: `${result.rowsAffected} users reactivated`
     });
@@ -3837,9 +3876,9 @@ app.post('/api/sleep/check-expired', async (req, res) => {
 app.get('/api/misuses/user/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId, 10); // Get from query param
 
-    if (!userId || isNaN(userId)) {
-      return res.status(400).json({ error: 'Invalid user ID' });
-    }
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -3860,7 +3899,7 @@ app.get('/api/misuses/user/:userId', async (req, res) => {
         WHERE mr.ReporterID = @userId
         ORDER BY mr.CreatedAt DESC
       `);
-    
+
     res.json(result.recordset);
   } catch (err) {
     console.error('Error fetching misuses for user:', err);
@@ -3877,12 +3916,12 @@ app.get('/api/misuses/counts', async (req, res) => {
       FROM MisuseReport
       GROUP BY ReporterID
     `);
-    
+
     const counts = {};
     result.recordset.forEach(row => {
       counts[row.UserID] = row.misuseCount;
     });
-    
+
     res.json(counts);
   } catch (err) {
     console.error('Error fetching misuse counts:', err);
@@ -3894,9 +3933,9 @@ app.get('/api/misuses/counts', async (req, res) => {
 app.get('/api/flags/user/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId, 10); // Get from query param
 
-    if (!userId || isNaN(userId)) {
-      return res.status(400).json({ error: 'Invalid user ID' });
-    }
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -3913,7 +3952,7 @@ app.get('/api/flags/user/:userId', async (req, res) => {
         WHERE fm.UserID = @userId
         ORDER BY fm.FlaggedAt DESC
       `);
-    
+
     res.json(result.recordset);
   } catch (err) {
     console.error('Error fetching flags for user:', err);
@@ -4119,7 +4158,7 @@ app.get('/topFiveResponders', async (req, res) => {
   try {
 
     pool = await sql.connect(config);
-    
+
     const result = await pool.request().query(`
       SELECT TOP 5
           u.UserID,
@@ -4474,26 +4513,26 @@ const createNotification = async (type, entityType, entityId, title, message, me
 // Add recipients to notification
 const addNotificationRecipients = async (notificationId, userIds) => {
   if (userIds.length === 0) return;
-  
+
   try {
     const pool = await sql.connect(config);
     const request = pool.request();
-    
+
     // Build dynamic query
     let query = `
       INSERT INTO NotificationRecipients (NotificationID, UserID, IsRead)
       VALUES 
     `;
-    
+
     const values = [];
     userIds.forEach((userId, index) => {
       values.push(`(@NotificationID, @UserID${index}, 0)`);
       request.input(`UserID${index}`, sql.Int, userId);
     });
-    
+
     query += values.join(',');
     request.input('NotificationID', sql.Int, notificationId);
-    
+
     await request.query(query);
   } catch (err) {
     console.error('Error adding recipients:', err);
@@ -4580,7 +4619,7 @@ function getDateRange(timeFrame) {
       start.setDate(now.getDate() - 1);
       break;
     case 'week':
-      start.setDate(now.getDate()- 7);
+      start.setDate(now.getDate() - 7);
       break;
     case 'month':
       start.setMonth(now.getMonth() - 1);
@@ -4866,7 +4905,7 @@ app.get('/api/voting-settings', async (req, res) => {
       FROM VotingSettings 
       ORDER BY SettingID DESC
     `);
-    
+
     if (result.recordset.length > 0) {
       res.json(result.recordset[0]);
     } else {
@@ -4886,7 +4925,7 @@ app.get('/api/voting-settings', async (req, res) => {
 // Update voting settings
 app.put('/api/voting-settings', async (req, res) => {
   const { VotingEnabled, StartDate, EndDate, UpdatedBy } = req.body;
-  
+
   try {
     const pool = await sql.connect(config);
     await pool.request()
@@ -4920,7 +4959,7 @@ app.put('/api/voting-settings', async (req, res) => {
           )
         END
       `);
-      
+
     res.json({ success: true });
   } catch (err) {
     console.error('Error updating voting settings:', err);
@@ -4986,14 +5025,14 @@ app.get('/api/votes/count', async (req, res) => {
       FROM Votes
       GROUP BY NomineeID
     `);
-    
+
     const counts = {};
     result.recordset.forEach(row => {
       // Convert NomineeID to integer
       const nomineeId = parseInt(row.NomineeID, 10);
       counts[nomineeId] = row.VoteCount;
     });
-    
+
     res.json(counts);
   } catch (err) {
     console.error('Error fetching vote counts:', err);
