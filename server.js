@@ -4221,6 +4221,7 @@ app.get('/reports/count/completed', async (req, res) => {
 
 app.get('/getSuburbsByType', async (req, res) => {
   const type = req.query.type;
+
   console.log('Received request for type:', type);
 
   if (!type) {
@@ -4228,23 +4229,27 @@ app.get('/getSuburbsByType', async (req, res) => {
   }
 
   try {
+    // Test database connection first
     const pool = await sql.connect(config);
     console.log('Database connected successfully');
 
     const request = pool.request();
     request.input("type", sql.VarChar, type);
 
+    console.log('Executing SQL query with type:', type);
+
+    // First, let's try a simpler query to see if the issue is with the table/columns
     const result = await request.query(`
       SELECT ReportID, Report_Location 
       FROM [dbo].[Report] 
       WHERE emergencyType = @type
     `);
 
-    console.log(`Found ${result.recordset.length} reports`);
+    console.log('Query executed successfully. Found', result.recordset.length, 'records');
 
     if (result.recordset.length === 0) {
-      return res.status(200).json({
-        success: true,
+      return res.status(200).json({ 
+        success: true, 
         message: 'No reports found for this type',
         reports: [],
         uniqueSuburbs: [],
@@ -4255,119 +4260,150 @@ app.get('/getSuburbsByType', async (req, res) => {
 
     const reportsWithSuburbs = [];
     const suburbSet = new Set();
-    const geocodeCache = new Map(); // Cache coordinates -> suburb
-    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const geocodePromises = [];
 
+    // Process each report
     for (const report of result.recordset) {
-      console.log('Processing report:', report.ReportID);
-
-      // Validate format
+      console.log('Processing report:', report.ReportID, 'Location:', report.Report_Location);
+      
+      // Validate location format
       if (!report.Report_Location || typeof report.Report_Location !== 'string') {
+        console.warn('Invalid location format for report', report.ReportID);
         const suburb = "Invalid Location";
         suburbSet.add(suburb);
+        
         reportsWithSuburbs.push({
           ReportID: report.ReportID,
           Report_Location: report.Report_Location || 'N/A',
-          suburb
+          suburb: suburb
         });
         continue;
       }
 
-      const [latStr, lngStr] = report.Report_Location.split(";");
+      const locationParts = report.Report_Location.split(";");
+      if (locationParts.length !== 2) {
+        console.warn('Invalid location format for report', report.ReportID, '- expected lat;lng format');
+        const suburb = "Invalid Location Format";
+        suburbSet.add(suburb);
+        
+        reportsWithSuburbs.push({
+          ReportID: report.ReportID,
+          Report_Location: report.Report_Location,
+          suburb: suburb
+        });
+        continue;
+      }
+
+      const [latStr, lngStr] = locationParts;
       const lat = parseFloat(latStr);
       const lng = parseFloat(lngStr);
 
-      if (isNaN(lat) || isNaN(lng)) {
+      if (!isNaN(lat) && !isNaN(lng)) {
+        // Add delay to avoid rate limiting from geocoding API
+        geocodePromises.push(
+          new Promise(resolve => {
+            setTimeout(async () => {
+              try {
+                console.log(`Geocoding ${lat}, ${lng} for report ${report.ReportID}`);
+                
+                const response = await fetch(
+                  `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+                  {
+                    headers: {
+                      //'User-Agent': 'YourAppName/1.0 (your-email@example.com)' 
+                      'User-Agent': 'EmergencyReportApp/1.0 (emergency-report@example.com)' // Add proper user agent
+                    }
+                  }
+                );
+
+                if (!response.ok) {
+                  throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const geoData = await response.json();
+                
+                const address = geoData.address || {};
+                let suburb = address.suburb || 
+                            address.neighbourhood || 
+                            address.village || 
+                            address.town || 
+                            address.city || 
+                            "Unknown Area";
+                
+                suburbSet.add(suburb);
+                
+                reportsWithSuburbs.push({
+                  ReportID: report.ReportID,
+                  Report_Location: report.Report_Location,
+                  suburb: suburb
+                });
+
+                console.log(`Successfully geocoded report ${report.ReportID} to ${suburb}`);
+                resolve();
+                
+              } catch (err) {
+                console.error("Reverse geocoding failed for report", report.ReportID, ":", err.message);
+                const suburb = "Geocoding Failed";
+                suburbSet.add(suburb);
+                
+                reportsWithSuburbs.push({
+                  ReportID: report.ReportID,
+                  Report_Location: report.Report_Location,
+                  suburb: suburb
+                });
+                resolve();
+              }
+            }, Math.random() * 1000); // Random delay 0-1 second to avoid rate limiting
+          })
+        );
+      } else {
+        console.warn('Invalid coordinates for report', report.ReportID, ':', latStr, lngStr);
         const suburb = "Invalid Coordinates";
         suburbSet.add(suburb);
+        
         reportsWithSuburbs.push({
           ReportID: report.ReportID,
           Report_Location: report.Report_Location,
-          suburb
-        });
-        continue;
-      }
-
-      const coordKey = `${lat},${lng}`;
-
-      // Use cached suburb if we already geocoded this coordinate
-      if (geocodeCache.has(coordKey)) {
-        const suburb = geocodeCache.get(coordKey);
-        suburbSet.add(suburb);
-        reportsWithSuburbs.push({
-          ReportID: report.ReportID,
-          Report_Location: report.Report_Location,
-          suburb
-        });
-        continue;
-      }
-
-      // Geocode
-      try {
-        console.log(`Geocoding ${coordKey}...`);
-        const response = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
-          {
-            headers: {
-              'User-Agent': 'EmergencyReportApp/1.0 (your-email@example.com)'
-            }
-          }
-        );
-
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-        const geoData = await response.json();
-        const address = geoData.address || {};
-        const suburb = address.suburb ||
-                       address.neighbourhood ||
-                       address.village ||
-                       address.town ||
-                       address.city ||
-                       "Unknown Area";
-
-        // Cache result
-        geocodeCache.set(coordKey, suburb);
-
-        suburbSet.add(suburb);
-        reportsWithSuburbs.push({
-          ReportID: report.ReportID,
-          Report_Location: report.Report_Location,
-          suburb
-        });
-
-      } catch (err) {
-        console.error(`Geocoding failed for ${coordKey}:`, err.message);
-        const suburb = "Geocoding Failed";
-        geocodeCache.set(coordKey, suburb); // Avoid retrying in same run
-        suburbSet.add(suburb);
-        reportsWithSuburbs.push({
-          ReportID: report.ReportID,
-          Report_Location: report.Report_Location,
-          suburb
+          suburb: suburb
         });
       }
-
-      // Wait 1 second before next request to respect Nominatim’s limit
-      await sleep(1000);
     }
 
-    // Sort and send
+    console.log('Waiting for all geocoding requests to complete...');
+    await Promise.all(geocodePromises);
+    console.log('All geocoding requests completed');
+
+    // Sort reports by ReportID
     reportsWithSuburbs.sort((a, b) => a.ReportID - b.ReportID);
+
+    // Convert Set to sorted array for unique suburbs
     const uniqueSuburbs = Array.from(suburbSet).sort();
 
-    res.status(200).json({
-      success: true,
+    console.log('Response ready:', {
+      totalReports: reportsWithSuburbs.length,
+      uniqueSuburbCount: uniqueSuburbs.length
+    });
+
+    res.status(200).json({ 
+      success: true, 
       reports: reportsWithSuburbs,
-      uniqueSuburbs,
+      uniqueSuburbs: uniqueSuburbs,
       totalReports: reportsWithSuburbs.length,
       uniqueSuburbCount: uniqueSuburbs.length
     });
 
   } catch (err) {
-    console.error('Error:', err);
-    res.status(500).json({
-      success: false,
-      error: 'Server error fetching suburbs'
+    console.error('Full error details:', {
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+      originalError: err.originalError
+    });
+    
+    res.status(500).json({ 
+      success: false, 
+      error: 'Database error',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 });
