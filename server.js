@@ -2987,6 +2987,12 @@ async function updateSuburbs() {
     };
 
     try {
+        // Ensure fetch is available
+        if (!fetch) {
+            const { default: nodeFetch } = await import('node-fetch');
+            fetch = nodeFetch;
+        }
+
         pool = await sql.connect(config);
         
         // Step 1: Get all reports that need suburb updates
@@ -3092,8 +3098,6 @@ async function updateSuburbs() {
     return result;
 }
 
-// API Endpoints
-
 // GET endpoint to trigger suburb update
 app.get('/api/update-suburbs', async (req, res) => {
     try {
@@ -3128,6 +3132,13 @@ app.get('/api/update-suburbs', async (req, res) => {
     }
 });
 
+// GET endpoint to check update status
+app.get('/api/update-suburbs/status', (req, res) => {
+    res.json({
+        isRunning: isUpdateRunning,
+        lastUpdate: lastUpdateResult
+    });
+});
 
 
 
