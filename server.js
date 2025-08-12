@@ -5010,8 +5010,7 @@ app.put('/api/voting-settings', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-// Get all nominations with vote counts
+// Get all nominations with vote counts (CORRECTED)
 app.get('/api/nominations', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -5024,7 +5023,29 @@ app.get('/api/nominations', async (req, res) => {
         SELECT NomineeID, COUNT(*) AS VoteCount
         FROM Votes
         GROUP BY NomineeID
-      ) v ON n.NomineeID = v.NomineeID
+      ) v ON n.NominationID = v.NomineeID  -- CHANGED THIS LINE
+      ORDER BY n.NominatedAt DESC
+    `);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching nominations:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// Get all nominations with vote counts (CORRECTED)
+app.get('/api/nominations', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request().query(`
+      SELECT 
+        n.*,
+        COALESCE(v.VoteCount, 0) AS VoteCount
+      FROM Nominations n
+      LEFT JOIN (
+        SELECT NomineeID, COUNT(*) AS VoteCount
+        FROM Votes
+        GROUP BY NomineeID
+      ) v ON n.NominationID = v.NomineeID  -- CHANGED THIS LINE
       ORDER BY n.NominatedAt DESC
     `);
     res.json(result.recordset);
