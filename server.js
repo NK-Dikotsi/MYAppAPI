@@ -5219,21 +5219,22 @@ app.get('/api/support/items', async (req, res) => {
     `;
     
     // Get flagged messages
-    const flaggedQuery = `
-      SELECT 
-        fm.FlagID AS id,
-        'flagged' AS type,
-        fm.FlaggedStatus AS status,
-        CONVERT(varchar, fm.FlaggedAt, 126) AS createdAt,  
-        fm.UserID AS reporterId,
-        u.FullName AS reporterName,
-        m.MessageID AS messageId,
-        m.Content AS messageContent,
-        fm.Reason
-      FROM FlaggedMessages fm
-      INNER JOIN Messages m ON fm.MessageID = m.MessageID
-      INNER JOIN Users u ON fm.UserID = u.UserID
-    `;
+    // server.js - Flagged Messages Query
+const flaggedQuery = `
+  SELECT 
+    fm.FlagID AS id,
+    'flagged' AS type,
+    fm.FlaggedStatus AS status,
+    CONVERT(varchar, fm.FlaggedAt, 126) AS createdAt,
+    fm.UserID AS reporterId,
+    u.FullName AS reporterName,
+    m.MessageID AS messageId,
+    m.Content AS messageContent,
+    fm.Reason AS reason 
+  FROM FlaggedMessages fm
+  INNER JOIN Messages m ON fm.MessageID = m.MessageID
+  INNER JOIN Users u ON fm.UserID = u.UserID
+`;
     
     const misuseResult = await pool.request().query(misuseQuery);
     const flaggedResult = await pool.request().query(flaggedQuery);
