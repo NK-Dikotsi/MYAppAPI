@@ -5320,7 +5320,7 @@ app.put('/api/support/items/:type/:id/status', async (req, res) => {
         .query(`
           UPDATE FlaggedMessages 
           SET FlaggedStatus = @status 
-          WHERE FlaggedMessageID = @id
+          WHERE FlagID = @id
         `);
     }
     
