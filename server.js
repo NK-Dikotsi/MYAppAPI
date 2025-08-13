@@ -5195,7 +5195,7 @@ app.get('/api/support/items', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     
-    // Get misuse reports with filer count
+    // Get misuse reports with filer count - CORRECTED
     const misuseQuery = `
       SELECT 
         mr.MisuseID AS id,
@@ -5217,21 +5217,21 @@ app.get('/api/support/items', async (req, res) => {
         u.FullName, mr.ReportID, mr.InitialDescription, mr.MisuseType
     `;
     
-    // Get flagged messages
+    // Get flagged messages - CORRECTED
     const flaggedQuery = `
       SELECT 
-        fm.FlaggedMessageID AS id,
+        fm.FlagID AS id,  // Changed from FlaggedMessageID to FlagID
         'flagged' AS type,
         fm.FlaggedStatus AS status,
-        fm.CreatedAt,
-        fm.ReporterID,
+        fm.FlaggedAt AS CreatedAt,  // Using correct column name
+        fm.UserID AS ReporterID,    // Using correct reporter column
         u.FullName AS reporterName,
         m.MessageID,
         m.Content AS messageContent,
         fm.Reason
       FROM FlaggedMessages fm
       INNER JOIN Messages m ON fm.MessageID = m.MessageID
-      INNER JOIN Users u ON fm.ReporterID = u.UserID
+      INNER JOIN Users u ON fm.UserID = u.UserID  // Corrected reporter join
     `;
     
     const misuseResult = await pool.request().query(misuseQuery);
@@ -5239,14 +5239,20 @@ app.get('/api/support/items', async (req, res) => {
     
     // Combine results
     const items = [
-      ...misuseResult.recordset.map(item => ({ ...item, filerCount: parseInt(item.filerCount) })),
+      ...misuseResult.recordset,
       ...flaggedResult.recordset
-    ];
+    ].map(item => ({
+      ...item,
+      filerCount: item.filerCount ? parseInt(item.filerCount) : 0
+    }));
     
     res.json(items);
   } catch (err) {
     console.error('Error fetching support items:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: err.message 
+    });
   }
 });
 
