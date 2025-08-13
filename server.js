@@ -4655,7 +4655,7 @@ app.get('/api/Leader/:userId/notifications', async (req, res) => {
 
 // PATCH /api/Leader/notifications/:id/read
 app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
-  const notificationId = req.params.id;
+  const notificationId = (req.params.id, 10);
   const userId = req.body.userId; // Get from request body
 
   if (!userId || isNaN(userId)) {
@@ -4682,7 +4682,7 @@ app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
 
 // PATCH /api/Leader/notifications/:userId/allread
 app.patch('/api/Leader/notifications/:userId/allread', async (req, res) => {
-  const userId = req.params.userId;
+  const userId = parseInt(req.params.userId, 10);
 
   if (!userId || isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid user ID' });
