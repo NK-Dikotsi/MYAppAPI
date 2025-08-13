@@ -3872,13 +3872,10 @@ app.post('/api/sleep/check-expired', async (req, res) => {
   }
 });
 
-// Get all misuse reports
+// Get misuse reports for a user
 app.get('/api/misuses/user/:userId', async (req, res) => {
-  const userId = parseInt(req.params.userId, 10); // Get from query param
-
-  if (!userId || isNaN(userId)) {
-    return res.status(400).json({ error: 'Invalid user ID' });
-  }
+  const userId = parseInt(req.params.userId, 10);
+  
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -3886,17 +3883,26 @@ app.get('/api/misuses/user/:userId', async (req, res) => {
       .query(`
         SELECT 
           mr.MisuseID,
-          mr.ReportType,
-          mr.Description,
-          mr.Evidence,
+          mr.MisuseType,
+          mr.InitialDescription,
           mr.CreatedAt,
-          mr.Status,
-          responder.FullName AS ResponderName,
-          r.emerDescription AS ReportDescription
+          mr.MisuseStatus,
+          r.emerDescription AS ReportDescription,
+          COUNT(mf.FilerID) AS FilerCount,
+          STRING_AGG(u.FullName, ', ') WITHIN GROUP (ORDER BY mf.FiledAt) AS Filers
         FROM MisuseReport mr
-        INNER JOIN Users responder ON mr.ResponderID = responder.UserID
         INNER JOIN Report r ON mr.ReportID = r.ReportID
-        WHERE mr.ReporterID = @userId
+        INNER JOIN MisuseFiler mf ON mr.MisuseID = mf.MisuseID
+        INNER JOIN Response res ON mf.ResponseID = res.ResponseID
+        INNER JOIN Users u ON res.UserID = u.UserID
+        WHERE r.ReporterID = @userId
+        GROUP BY 
+          mr.MisuseID, 
+          mr.MisuseType, 
+          mr.InitialDescription, 
+          mr.CreatedAt, 
+          mr.MisuseStatus,
+          r.emerDescription
         ORDER BY mr.CreatedAt DESC
       `);
 
@@ -3912,9 +3918,12 @@ app.get('/api/misuses/counts', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     const result = await pool.request().query(`
-      SELECT ReporterID AS UserID, COUNT(*) AS misuseCount
-      FROM MisuseReport
-      GROUP BY ReporterID
+      SELECT 
+        r.ReporterID AS UserID, 
+        COUNT(DISTINCT mr.MisuseID) AS misuseCount
+      FROM MisuseReport mr
+      INNER JOIN Report r ON mr.ReportID = r.ReportID
+      GROUP BY r.ReporterID
     `);
 
     const counts = {};
