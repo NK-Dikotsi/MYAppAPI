@@ -5191,6 +5191,7 @@ app.get('/api/votes/count', async (req, res) => {
 // Support Dashboard API Endpoints
 
 // Get all support items (misuse reports and flagged messages)
+// server.js
 app.get('/api/support/items', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -5201,10 +5202,10 @@ app.get('/api/support/items', async (req, res) => {
         mr.MisuseID AS id,
         'misuse' AS type,
         mr.MisuseStatus AS status,
-        mr.CreatedAt,
-        r.ReporterID,
+        CONVERT(varchar, mr.CreatedAt, 126) AS createdAt, 
+        r.ReporterID AS reporterId,
         u.FullName AS reporterName,
-        mr.ReportID,
+        mr.ReportID AS reportId,
         mr.InitialDescription AS description,
         mr.MisuseType AS reason,
         COUNT(mf.FilerID) AS filerCount
@@ -5223,10 +5224,10 @@ app.get('/api/support/items', async (req, res) => {
         fm.FlagID AS id,
         'flagged' AS type,
         fm.FlaggedStatus AS status,
-        fm.FlaggedAt AS CreatedAt,
-        fm.UserID AS ReporterID,
+        CONVERT(varchar, fm.FlaggedAt, 126) AS createdAt,  
+        fm.UserID AS reporterId,
         u.FullName AS reporterName,
-        m.MessageID,
+        m.MessageID AS messageId,
         m.Content AS messageContent,
         fm.Reason
       FROM FlaggedMessages fm
@@ -5243,7 +5244,9 @@ app.get('/api/support/items', async (req, res) => {
       ...flaggedResult.recordset
     ].map(item => ({
       ...item,
-      filerCount: item.filerCount ? parseInt(item.filerCount) : 0
+      filerCount: item.filerCount ? parseInt(item.filerCount) : 0,
+      // Ensure createdAt is always in ISO format
+      createdAt: item.createdAt || null
     }));
     
     res.json(items);
