@@ -4713,7 +4713,13 @@ app.patch('/api/Leader/notifications/allread/:userId', async (req, res) => {
   }
 });
 
-
+// Add this GET endpoint for testing purposes only
+app.get('/api/Leader/notifications/allread/:userId', (req, res) => {
+  res.status(405).json({ 
+    error: 'Method not allowed. Use PATCH instead.',
+    example: `curl -X PATCH "https://your-api.com/api/Leader/notifications/allread/${req.params.userId}"`
+  });
+});
 
 //******************STATISTICS ENDPOINTS ADMIN********************//
 
