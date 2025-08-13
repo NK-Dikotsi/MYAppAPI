@@ -4680,6 +4680,35 @@ app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
   }
 });
 
+// PATCH /api/Leader/notifications/:userId/allread
+app.patch('/api/Leader/notifications/:userId/allread', async (req, res) => {
+  const userId = req.params.userId;
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        UPDATE nr
+        SET IsRead = 1, 
+            ReadAt = dbo.GetSASTDateTime()
+        FROM NotificationRecipients nr
+        INNER JOIN Notifications n ON n.NotificationID = nr.NotificationID
+        WHERE nr.UserID = @UserID
+          AND n.NotificationType = 'BROADCAST'
+          AND nr.IsRead = 0  -- Only update unread notifications
+      `);
+
+    res.json({ success: true, message: 'All broadcast notifications marked as read' });
+  } catch (err) {
+    console.error('Error marking broadcast notifications as read:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
 
