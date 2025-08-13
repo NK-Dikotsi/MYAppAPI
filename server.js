@@ -5186,3 +5186,168 @@ app.get('/api/votes/count', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+/****************SUPPORT PAGE  *********************/
+// Support Dashboard API Endpoints
+
+// Get all support items (misuse reports and flagged messages)
+app.get('/api/support/items', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    
+    // Get misuse reports with filer count
+    const misuseQuery = `
+      SELECT 
+        mr.MisuseID AS id,
+        'misuse' AS type,
+        mr.MisuseStatus AS status,
+        mr.CreatedAt,
+        r.ReporterID,
+        u.FullName AS reporterName,
+        mr.ReportID,
+        mr.InitialDescription AS description,
+        mr.MisuseType AS reason,
+        COUNT(mf.FilerID) AS filerCount
+      FROM MisuseReport mr
+      INNER JOIN Report r ON mr.ReportID = r.ReportID
+      INNER JOIN Users u ON r.ReporterID = u.UserID
+      LEFT JOIN MisuseFiler mf ON mr.MisuseID = mf.MisuseID
+      GROUP BY 
+        mr.MisuseID, mr.MisuseStatus, mr.CreatedAt, r.ReporterID, 
+        u.FullName, mr.ReportID, mr.InitialDescription, mr.MisuseType
+    `;
+    
+    // Get flagged messages
+    const flaggedQuery = `
+      SELECT 
+        fm.FlaggedMessageID AS id,
+        'flagged' AS type,
+        fm.FlaggedStatus AS status,
+        fm.CreatedAt,
+        fm.ReporterID,
+        u.FullName AS reporterName,
+        m.MessageID,
+        m.Content AS messageContent,
+        fm.Reason
+      FROM FlaggedMessages fm
+      INNER JOIN Messages m ON fm.MessageID = m.MessageID
+      INNER JOIN Users u ON fm.ReporterID = u.UserID
+    `;
+    
+    const misuseResult = await pool.request().query(misuseQuery);
+    const flaggedResult = await pool.request().query(flaggedQuery);
+    
+    // Combine results
+    const items = [
+      ...misuseResult.recordset.map(item => ({ ...item, filerCount: parseInt(item.filerCount) })),
+      ...flaggedResult.recordset
+    ];
+    
+    res.json(items);
+  } catch (err) {
+    console.error('Error fetching support items:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get filers for a misuse report
+app.get('/api/support/misuse/filers/:misuseId', async (req, res) => {
+  const misuseId = parseInt(req.params.misuseId, 10);
+  
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('misuseId', sql.Int, misuseId)
+      .query(`
+        SELECT 
+          u.UserID AS id,
+          u.FullName AS name,
+          u.Email,
+          mf.FiledAt,
+          mf.AdditionalDescription
+        FROM MisuseFiler mf
+        INNER JOIN Response r ON mf.ResponseID = r.ResponseID
+        INNER JOIN Users u ON r.UserID = u.UserID
+        WHERE mf.MisuseID = @misuseId
+        ORDER BY mf.FiledAt DESC
+      `);
+      
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching misuse filers:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update item status
+app.put('/api/support/items/:type/:id/status', async (req, res) => {
+  const { type, id } = req.params;
+  const { status } = req.body;
+  
+  if (!['misuse', 'flagged'].includes(type)) {
+    return res.status(400).json({ error: 'Invalid item type' });
+  }
+  
+  if (!['Pending', 'Reviewed', 'Resolved'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+  
+  try {
+    const pool = await sql.connect(config);
+    
+    if (type === 'misuse') {
+      await pool.request()
+        .input('id', sql.Int, id)
+        .input('status', sql.VarChar(20), status)
+        .query(`
+          UPDATE MisuseReport 
+          SET MisuseStatus = @status 
+          WHERE MisuseID = @id
+        `);
+    } else {
+      await pool.request()
+        .input('id', sql.Int, id)
+        .input('status', sql.VarChar(20), status)
+        .query(`
+          UPDATE FlaggedMessages 
+          SET FlaggedStatus = @status 
+          WHERE FlaggedMessageID = @id
+        `);
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating item status:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get support statistics
+app.get('/api/support/stats', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    
+    const misusePending = await pool.request().query(`
+      SELECT COUNT(*) AS count 
+      FROM MisuseReport 
+      WHERE MisuseStatus = 'Pending'
+    `);
+    
+    const flaggedPending = await pool.request().query(`
+      SELECT COUNT(*) AS count 
+      FROM FlaggedMessages 
+      WHERE FlaggedStatus = 'Pending'
+    `);
+    
+    const stats = {
+      totalPending: misusePending.recordset[0].count + flaggedPending.recordset[0].count,
+      misusePending: misusePending.recordset[0].count,
+      flaggedPending: flaggedPending.recordset[0].count
+    };
+    
+    res.json(stats);
+  } catch (err) {
+    console.error('Error fetching support stats:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
