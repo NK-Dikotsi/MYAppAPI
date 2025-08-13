@@ -4655,7 +4655,7 @@ app.get('/api/Leader/:userId/notifications', async (req, res) => {
 
 // PATCH /api/Leader/notifications/:id/read
 app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
-  const notificationId = (req.params.id, 10);
+  const notificationId = parseInt(req.params.id, 10);
   const userId = req.body.userId; 
 
   if (!userId || isNaN(userId)) {
@@ -4680,17 +4680,17 @@ app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
   }
 });
 
-// PATCH /api/Leader/notifications/:userId/allread
-app.patch('/api/Leader/notifications/:userId/allread', async (req, res) => {
-  const userId = parseInt(req.params.userId, 10);
+// PATCH /api/Leader/notifications/allread/:userId
+app.patch('/api/Leader/notifications/allread/:userId', async (req, res) => {
+  const userId = parseInt(req.params.userId, 10)
 
-  if (!userId || isNaN(userId)) {
+  if (!userId || isNaN(Number(userId))) {
     return res.status(400).json({ error: 'Invalid user ID' });
   }
 
   try {
     const pool = await sql.connect(config);
-    await pool.request()
+    const result = await pool.request()
       .input('UserID', sql.Int, userId)
       .query(`
         UPDATE nr
@@ -4700,12 +4700,15 @@ app.patch('/api/Leader/notifications/:userId/allread', async (req, res) => {
         INNER JOIN Notifications n ON n.NotificationID = nr.NotificationID
         WHERE nr.UserID = @UserID
           AND n.NotificationType = 'BROADCAST'
-          AND nr.IsRead = 0  -- Only update unread notifications
+          AND nr.IsRead = 0
       `);
 
-    res.json({ success: true, message: 'All broadcast notifications marked as read' });
+    res.json({ 
+      success: true,
+      message: `Marked ${result.rowsAffected[0]} notifications as read`
+    });
   } catch (err) {
-    console.error('Error marking broadcast notifications as read:', err);
+    console.error('Error marking notifications as read:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
