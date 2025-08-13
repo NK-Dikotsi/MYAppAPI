@@ -4669,7 +4669,7 @@ app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
       .input('UserID', sql.Int, userId)
       .query(`
         UPDATE NotificationRecipients
-        SET IsRead = 1, ReadAt = GETDATE()
+        SET IsRead = 1, ReadAt = dbo.GetSASTDateTime()
         WHERE NotificationID = @NotificationID AND UserID = @UserID
       `);
 
