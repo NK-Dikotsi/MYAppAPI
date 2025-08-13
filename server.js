@@ -530,6 +530,45 @@ app.get('/getReports', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 });
+app.get('/analytics/getReports', async (req, res) => {
+  const userId = parseInt(req.query.userId);
+  console.log(userId);
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ message: 'Missing or invalid userId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT 
+          ReportID,
+          ReporterID,
+          emergencyType,
+          emerDescription,
+          sharedWith,
+          Report_Location,
+          Report_Status,
+          dateReported,
+          suburbName
+        FROM [dbo].[Report]
+        WHERE ReporterID = @UserID
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: 'No reports found for this user.' });
+    }
+
+    res.status(200).json({ success: true, reports: result.recordset });
+  } catch (err) {
+    console.error('Error fetching analytics reports by userId:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
 
 app.put('/updateUser', async (req, res) => {
   const { userID, fullName, phoneNumber, username, dob, homeAddress, imageBase64, gender } = req.body;
@@ -3875,7 +3914,7 @@ app.post('/api/sleep/check-expired', async (req, res) => {
 // Get misuse reports for a user
 app.get('/api/misuses/user/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
-  
+
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -3940,7 +3979,7 @@ app.get('/api/misuses/counts', async (req, res) => {
 // Backend endpoint
 app.get('/api/misuse/filers/:misuseId', async (req, res) => {
   const misuseId = parseInt(req.params.misuseId, 10);
-  
+
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -3957,7 +3996,7 @@ app.get('/api/misuse/filers/:misuseId', async (req, res) => {
         WHERE mf.MisuseID = @misuseId
         ORDER BY mf.FiledAt
       `);
-      
+
     res.json(result.recordset);
   } catch (err) {
     console.error('Error fetching filers:', err);
@@ -4965,7 +5004,7 @@ app.get('/api/analytics/messages', async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching message analytics:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Internal server error',
       details: err.message
     });
