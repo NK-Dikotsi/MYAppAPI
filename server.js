@@ -1365,7 +1365,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
           try {
             // Get all Leaders
             const admins = await backgroundPool.request()
-              .query("SELECT UserID FROM CommunityMember WHERE UserType = 'CommunityLeader'");
+              .query("SELECT UserID FROM CommunityMember WHERE Role = 'CommunityLeader'");
 
             if (admins.recordset.length > 0) {
               // Create notification
