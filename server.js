@@ -4618,7 +4618,7 @@ const addNotificationRecipients = async (notificationId, userIds) => {
 
 // GET /api/Leader/notifications
 app.get('/api/Leader/:userId/notifications', async (req, res) => {
-  const userId = parseInt(req.params.userId, 10); // Get from query param
+  const userId = parseInt(req.params.userId, 10); 
 
   if (!userId || isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid user ID' });
@@ -4656,7 +4656,7 @@ app.get('/api/Leader/:userId/notifications', async (req, res) => {
 // PATCH /api/Leader/notifications/:id/read
 app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
   const notificationId = (req.params.id, 10);
-  const userId = req.body.userId; // Get from request body
+  const userId = req.body.userId; 
 
   if (!userId || isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid user ID' });
