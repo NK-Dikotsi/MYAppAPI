@@ -4020,6 +4020,7 @@ app.get('/api/flags/user/:userId', async (req, res) => {
           fm.FlagID,
           fm.Reason AS FlagType,
           fm.FlaggedAt AS CreatedAt,
+          fm.FlaggedStatus AS Status,
           reporter.FullName AS ReporterName,
           fm.Reason AS Description
         FROM FlaggedMessages fm
