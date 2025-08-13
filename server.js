@@ -3937,6 +3937,33 @@ app.get('/api/misuses/counts', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// Backend endpoint
+app.get('/api/misuse/filers/:misuseId', async (req, res) => {
+  const misuseId = parseInt(req.params.misuseId, 10);
+  
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('misuseId', sql.Int, misuseId)
+      .query(`
+        SELECT 
+          u.FullName,
+          u.Email,
+          mf.AdditionalDescription,
+          mf.FiledAt
+        FROM MisuseFiler mf
+        INNER JOIN Response res ON mf.ResponseID = res.ResponseID
+        INNER JOIN Users u ON res.UserID = u.UserID
+        WHERE mf.MisuseID = @misuseId
+        ORDER BY mf.FiledAt
+      `);
+      
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('Error fetching filers:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Get flag details for a specific user
 app.get('/api/flags/user/:userId', async (req, res) => {
