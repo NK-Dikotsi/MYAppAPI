@@ -5195,7 +5195,7 @@ app.get('/api/support/items', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     
-    // Get misuse reports with filer count - CORRECTED
+    // Get misuse reports with filer count
     const misuseQuery = `
       SELECT 
         mr.MisuseID AS id,
@@ -5217,21 +5217,21 @@ app.get('/api/support/items', async (req, res) => {
         u.FullName, mr.ReportID, mr.InitialDescription, mr.MisuseType
     `;
     
-    // Get flagged messages - CORRECTED
+    // Get flagged messages
     const flaggedQuery = `
       SELECT 
-        fm.FlagID AS id,  // Changed from FlaggedMessageID to FlagID
+        fm.FlagID AS id,
         'flagged' AS type,
         fm.FlaggedStatus AS status,
-        fm.FlaggedAt AS CreatedAt,  // Using correct column name
-        fm.UserID AS ReporterID,    // Using correct reporter column
+        fm.FlaggedAt AS CreatedAt,
+        fm.UserID AS ReporterID,
         u.FullName AS reporterName,
         m.MessageID,
         m.Content AS messageContent,
         fm.Reason
       FROM FlaggedMessages fm
       INNER JOIN Messages m ON fm.MessageID = m.MessageID
-      INNER JOIN Users u ON fm.UserID = u.UserID  // Corrected reporter join
+      INNER JOIN Users u ON fm.UserID = u.UserID
     `;
     
     const misuseResult = await pool.request().query(misuseQuery);
