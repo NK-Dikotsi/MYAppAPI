@@ -3012,12 +3012,13 @@ app.post('/api/votes', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'You have already voted' });
     }
 
-    // Record the vote - FIXED: Use correct field mapping
+    // FIXED: Record the vote with correct field mapping
+    // The issue was using NomineeID instead of NominationID in the INSERT
     await pool.request()
       .input('VoterID', sql.Int, voterId)
       .input('NominationID', sql.Int, nominationId)
       .query(`
-        INSERT INTO Votes (VoterID, NomineeID)
+        INSERT INTO Votes (VoterID, NominationID)
         VALUES (@VoterID, @NominationID)
       `);
 
@@ -3027,7 +3028,6 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 // Fixed Results endpoint
 app.get('/api/votes/results', async (req, res) => {
   try {
@@ -3043,7 +3043,7 @@ app.get('/api/votes/results', async (req, res) => {
           COUNT(v.VoteID) AS VoteCount
         FROM Nominations n
         JOIN Users u ON n.NomineeID = u.UserID
-        LEFT JOIN Votes v ON n.NominationID = v.NomineeID
+        LEFT JOIN Votes v ON n.NominationID = v.NominationID
         WHERE n.Status = 'accepted'
         GROUP BY n.NominationID, u.UserID, u.FullName, u.Username, u.ProfilePhoto
         ORDER BY VoteCount DESC, u.FullName ASC
@@ -3080,7 +3080,7 @@ app.get('/api/leader/current', async (req, res) => {
           COUNT(v.VoteID) AS VoteCount
         FROM Nominations n
         JOIN Users u ON n.NomineeID = u.UserID
-        LEFT JOIN Votes v ON n.NominationID = v.NomineeID
+        LEFT JOIN Votes v ON n.NominationID = v.NominationID
         WHERE n.Status = 'accepted'
         GROUP BY u.UserID, u.FullName, u.Username, u.ProfilePhoto
         HAVING COUNT(v.VoteID) > 0
@@ -3101,6 +3101,38 @@ app.get('/api/leader/current', async (req, res) => {
     });
   } catch (err) {
     console.error('Error fetching current leader:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/votes/current', requireAuth, async (req, res) => {
+  const userId = req.session.user.id;
+  
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('VoterID', sql.Int, userId)
+      .query(`
+        SELECT 
+          v.VoteID,
+          v.NomineeID as nominationId
+        FROM Votes v
+        WHERE v.VoterID = @VoterID
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.json({ vote: null });
+    }
+
+    const vote = result.recordset[0];
+    res.json({
+      vote: {
+        voteId: vote.VoteID,
+        nominationId: vote.nominationId
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching current vote:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
