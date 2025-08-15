@@ -4454,6 +4454,40 @@ app.get('/getReportsByUser', async (req, res) => {
   }
 });
 
+app.get('/getcountbyemergency', async (req, res) => {
+  try {
+    const { type } = req.query;
+    if (!type) {
+      return res.status(400).json({ success: false, error: 'Missing report type' });
+    }
+
+    const pool = await pooolpromise; // Assuming pooolpromise is your DB connection promise
+    const result = await pool.request()
+      .input("type", sql.VarChar, type)
+      .query(`
+        SELECT 
+          suburbName,
+          Report_Status,
+          COUNT(*) AS report_count
+        FROM [dbo].[Report]
+        WHERE emergencyType = @type
+        GROUP BY suburbName, Report_Status
+        ORDER BY suburbName, Report_Status
+      `);
+
+    return res.status(200).json({
+      success: true,
+      data: result.recordset
+    });
+
+  } catch (error) {
+    console.error("Error fetching report counts:", error);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+
+
 app.get('/getReportsByTypeWithSuburbs', async (req, res) => {
   const { type } = req.query;
   if (!type) {
