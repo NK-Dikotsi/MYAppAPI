@@ -967,6 +967,35 @@ app.get('/user', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 });
+app.get('/getFullName', async (req, res) => {
+  const userID = parseInt(req.query.userID);
+
+  if (!userID || isNaN(userID)) {
+    return res.status(400).json({ success: false, message: 'Invalid or missing userID.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userID)
+      .query(`SELECT FullName FROM [dbo].[Users] WHERE UserID = @UserID`);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      FullName: result.recordset[0].FullName
+    });
+
+  } catch (err) {
+    console.error('Error fetching full name:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
 app.get('/comMember', async (req, res) => {
   const userID = parseInt(req.query.userID);
 
@@ -4461,7 +4490,7 @@ app.get('/getcountbyemergency', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing report type' });
     }
 
-    const pool = await sql.connect(config); 
+    const pool = await sql.connect(config);
     const result = await pool.request()
       .input("type", sql.VarChar, type)
       .query(`
@@ -4652,7 +4681,7 @@ const addNotificationRecipients = async (notificationId, userIds) => {
 
 // GET /api/Leader/notifications
 app.get('/api/Leader/:userId/notifications', async (req, res) => {
-  const userId = parseInt(req.params.userId, 10); 
+  const userId = parseInt(req.params.userId, 10);
 
   if (!userId || isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid user ID' });
@@ -4690,7 +4719,7 @@ app.get('/api/Leader/:userId/notifications', async (req, res) => {
 // PATCH /api/Leader/notifications/:id/read
 app.patch('/api/Leader/notifications/:id/read', async (req, res) => {
   const notificationId = parseInt(req.params.id, 10);
-  const userId = req.body.userId; 
+  const userId = req.body.userId;
 
   if (!userId || isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid user ID' });
@@ -4737,7 +4766,7 @@ app.patch('/api/Leader/notifications/allread/:userId', async (req, res) => {
           AND nr.IsRead = 0
       `);
 
-    res.json({ 
+    res.json({
       success: true,
       message: `Marked ${result.rowsAffected[0]} notifications as read`
     });
@@ -4749,7 +4778,7 @@ app.patch('/api/Leader/notifications/allread/:userId', async (req, res) => {
 
 // Add this GET endpoint for testing purposes only
 app.get('/api/Leader/notifications/allread/:userId', (req, res) => {
-  res.status(405).json({ 
+  res.status(405).json({
     error: 'Method not allowed. Use PATCH instead.',
     example: `curl -X PATCH "https://your-api.com/api/Leader/notifications/allread/${req.params.userId}"`
   });
@@ -5268,7 +5297,7 @@ app.get('/api/votes/count', async (req, res) => {
 app.get('/api/support/items', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     // Get misuse reports with filer count
     const misuseQuery = `
       SELECT 
@@ -5290,10 +5319,10 @@ app.get('/api/support/items', async (req, res) => {
         mr.MisuseID, mr.MisuseStatus, mr.CreatedAt, r.ReporterID, 
         u.FullName, mr.ReportID, mr.InitialDescription, mr.MisuseType
     `;
-    
+
     // Get flagged messages
     // server.js - Flagged Messages Query
-const flaggedQuery = `
+    const flaggedQuery = `
   SELECT 
     fm.FlagID AS id,
     'flagged' AS type,
@@ -5308,10 +5337,10 @@ const flaggedQuery = `
   INNER JOIN Messages m ON fm.MessageID = m.MessageID
   INNER JOIN Users u ON fm.UserID = u.UserID
 `;
-    
+
     const misuseResult = await pool.request().query(misuseQuery);
     const flaggedResult = await pool.request().query(flaggedQuery);
-    
+
     // Combine results
     const items = [
       ...misuseResult.recordset,
@@ -5322,13 +5351,13 @@ const flaggedQuery = `
       // Ensure createdAt is always in ISO format
       createdAt: item.createdAt || null
     }));
-    
+
     res.json(items);
   } catch (err) {
     console.error('Error fetching support items:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Internal server error',
-      details: err.message 
+      details: err.message
     });
   }
 });
@@ -5336,7 +5365,7 @@ const flaggedQuery = `
 // Get filers for a misuse report
 app.get('/api/support/misuse/filers/:misuseId', async (req, res) => {
   const misuseId = parseInt(req.params.misuseId, 10);
-  
+
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -5354,7 +5383,7 @@ app.get('/api/support/misuse/filers/:misuseId', async (req, res) => {
         WHERE mf.MisuseID = @misuseId
         ORDER BY mf.FiledAt DESC
       `);
-      
+
     res.json(result.recordset);
   } catch (err) {
     console.error('Error fetching misuse filers:', err);
@@ -5366,18 +5395,18 @@ app.get('/api/support/misuse/filers/:misuseId', async (req, res) => {
 app.put('/api/support/items/:type/:id/status', async (req, res) => {
   const { type, id } = req.params;
   const { status } = req.body;
-  
+
   if (!['misuse', 'flagged'].includes(type)) {
     return res.status(400).json({ error: 'Invalid item type' });
   }
-  
+
   if (!['Pending', 'Reviewed', 'Resolved'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
-  
+
   try {
     const pool = await sql.connect(config);
-    
+
     if (type === 'misuse') {
       await pool.request()
         .input('id', sql.Int, id)
@@ -5397,7 +5426,7 @@ app.put('/api/support/items/:type/:id/status', async (req, res) => {
           WHERE FlagID = @id
         `);
     }
-    
+
     res.json({ success: true });
   } catch (err) {
     console.error('Error updating item status:', err);
@@ -5409,25 +5438,25 @@ app.put('/api/support/items/:type/:id/status', async (req, res) => {
 app.get('/api/support/stats', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     const misusePending = await pool.request().query(`
       SELECT COUNT(*) AS count 
       FROM MisuseReport 
       WHERE MisuseStatus = 'Pending'
     `);
-    
+
     const flaggedPending = await pool.request().query(`
       SELECT COUNT(*) AS count 
       FROM FlaggedMessages 
       WHERE FlaggedStatus = 'Pending'
     `);
-    
+
     const stats = {
       totalPending: misusePending.recordset[0].count + flaggedPending.recordset[0].count,
       misusePending: misusePending.recordset[0].count,
       flaggedPending: flaggedPending.recordset[0].count
     };
-    
+
     res.json(stats);
   } catch (err) {
     console.error('Error fetching support stats:', err);
