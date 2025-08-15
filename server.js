@@ -4461,7 +4461,7 @@ app.get('/getcountbyemergency', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing report type' });
     }
 
-    const pool = await poolPromise; // Assuming pooolpromise is your DB connection promise
+    const pool = await sql.connect(config); 
     const result = await pool.request()
       .input("type", sql.VarChar, type)
       .query(`
