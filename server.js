@@ -995,6 +995,35 @@ app.get('/getFullName', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 });
+app.get('/getUsername', async (req, res) => {
+  const userID = parseInt(req.query.userID);
+
+  if (!userID || isNaN(userID)) {
+    return res.status(400).json({ success: false, message: 'Invalid or missing userID.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userID)
+      .query(`SELECT Username FROM [dbo].[Users] WHERE UserID = @UserID`);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      Username: result.recordset[0].Username
+    });
+
+  } catch (err) {
+    console.error('Error fetching username:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
 
 app.get('/comMember', async (req, res) => {
   const userID = parseInt(req.query.userID);
