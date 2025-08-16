@@ -4284,9 +4284,92 @@ app.get('/api/sleep-status/:userId', async (req, res) => {
   }
 });
 
+// Promote a user to Community Leader
+app.put('/api/community-members/:userId/promote', async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
 
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`
+        UPDATE CommunityMember
+        SET Role = 'CommunityLeader'
+        WHERE UserID = @userId
+        
+        IF @@ROWCOUNT = 0
+        BEGIN
+          -- Create a new record if one doesn't exist
+          INSERT INTO CommunityMember (UserID, Role)
+          VALUES (@userId, 'CommunityLeader')
+        END
+        
+        SELECT * FROM CommunityMember WHERE UserID = @userId
+      `);
+    
+    if (result.recordset.length > 0) {
+      res.json({
+        success: true,
+        message: 'User promoted to Community Leader',
+        user: result.recordset[0]
+      });
+    } else {
+      res.status(404).json({ error: 'User not found in community members' });
+    }
+  } catch (err) {
+    console.error('Error promoting user:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
-
+// Endpoint to check and disable expired voting sessions
+app.put('/api/voting-settings/check-expiry', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    
+    // 1. Get current SAST time from database function
+    const currentTimeResult = await pool.request().query('SELECT dbo.GetSASTDateTime() AS CurrentTime');
+    const currentTime = currentTimeResult.recordset[0].CurrentTime;
+    
+    // 2. Check for active sessions that have ended
+    const result = await pool.request().query(`
+      UPDATE VotingSettings
+      SET VotingEnabled = 0
+      WHERE SettingID = (
+        SELECT TOP 1 SettingID 
+        FROM VotingSettings 
+        WHERE VotingEnabled = 1 
+          AND EndDate < '${currentTime}'
+        ORDER BY SettingID DESC
+      )
+      
+      SELECT @@ROWCOUNT AS UpdatedCount
+    `);
+    
+    const updatedCount = result.recordset[0].UpdatedCount;
+    
+    if (updatedCount > 0) {
+      res.json({ 
+        success: true, 
+        message: 'Disabled expired voting session',
+        updatedCount
+      });
+    } else {
+      res.json({ 
+        success: true, 
+        message: 'No active sessions to expire',
+        updatedCount: 0
+      });
+    }
+  } catch (err) {
+    console.error('Error checking voting expiry:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
 
