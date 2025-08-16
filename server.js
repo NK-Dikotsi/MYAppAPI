@@ -617,49 +617,55 @@ app.put('/updateUser', async (req, res) => {
 
 app.post('/addReport', async (req, res) => {
   const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus } = req.body;
-  let suburbName = ""; // use let so you can assign below
+
+  let suburbName = "Unknown"; // Default fallback
+  let pool;
 
   try {
-    const [lat, lon] = reportLocation.split(';'); // split by semicolon, adjust if needed
+    // First, let's get the suburb name from coordinates
+    if (reportLocation) {
+      try {
+        // Import node-fetch dynamically (same as updateSuburbs function)
+        const { default: fetch } = await import("node-fetch");
 
-    if (!lat || !lon) {
-      throw new Error('Invalid reportLocation format');
-    }
+        const [lat, lng] = reportLocation.split(";").map(v => v.trim());
 
-    const response = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1&zoom=18`,
-      {
-        headers: {
-          "User-Agent": "EmergencyReportApp/1.0 (emergency-report@example.com)",
-        },
+        // Validate coordinates (same validation as updateSuburbs)
+        if (!lat || !lng || isNaN(parseFloat(lat)) || isNaN(parseFloat(lng))) {
+          console.warn(`Invalid coordinates for new report: ${reportLocation}`);
+          suburbName = "Unknown";
+        } else {
+          const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&zoom=18`;
+
+          const response = await fetch(url, {
+            headers: { "User-Agent": "SizaCommunityWatch/1.0" } // Same user agent as updateSuburbs
+          });
+
+          if (!response.ok) {
+            throw new Error(`API responded with status: ${response.status}`);
+          }
+
+          const data = await response.json();
+
+          // Extract suburb with same priority as updateSuburbs function
+          const detectedSuburb = data.address?.suburb || data.address?.neighbourhood || null;
+
+          if (detectedSuburb) {
+            suburbName = detectedSuburb;
+            console.log(`✓ New report suburb detected: ${suburbName}`);
+          } else {
+            console.log(`✗ No suburb found for coordinates: ${lat}, ${lng}`);
+            suburbName = "Unknown";
+          }
+        }
+      } catch (geocodingError) {
+        console.error('Reverse geocoding failed:', geocodingError.message);
+        suburbName = "Unknown";
       }
-    );
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
     }
 
-    const data = await response.json();
-
-    // Extract suburb with fallback
-    suburbName =
-      data?.address?.suburb ||
-      data?.address?.neighbourhood ||
-      data?.address?.city ||
-      data?.address?.town ||
-      data?.address?.village ||
-      "Unknown";
-
-  } catch (error) {
-    console.error('Reverse geocoding failed:', error);
-    // You can decide how to handle this:
-    // For example, send error response or continue with suburbName = "Unknown"
-    // return res.status(400).json({ message: 'Invalid location data' });
-    suburbName = "Unknown";
-  }
-
-  try {
-    const pool = await sql.connect(config);
-
+    // Now insert the report with the detected suburb
+    pool = await sql.connect(config);
     const result = await pool.request()
       .input('ReporterID', sql.Int, reporterID)
       .input('EmergencyType', sql.VarChar, emergencyType)
@@ -682,11 +688,18 @@ app.post('/addReport', async (req, res) => {
 
     res.status(201).json({
       message: 'Report submitted successfully.',
-      reportID: insertedReportID
+      reportID: insertedReportID,
+      suburbName: suburbName // Include detected suburb in response
     });
+
   } catch (err) {
     console.error('Add report error:', err);
     res.status(500).json({ message: 'Internal server error.' });
+  } finally {
+    // Ensure database connection is closed
+    if (pool) {
+      await pool.close();
+    }
   }
 });
 
