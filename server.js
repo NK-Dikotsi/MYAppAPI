@@ -3489,6 +3489,86 @@ app.get('/getResponse', async (req, res) => {
     });
   }
 });
+// Create or update a misuse report
+app.put('/api/mobile/misusereport', async (req, res) => {
+  const { reportId, userId, responseId, misuseType, description } = req.body;
+
+  // Validate required parameters
+  if (!reportId || !userId || !responseId || !misuseType || !description) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+
+  // Validate misuseType
+  const allowedTypes = ['False Report', 'Suspicious Activity', 'Crime', 'Other'];
+  if (!allowedTypes.includes(misuseType)) {
+    return res.status(400).json({ error: 'Invalid misuse type' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    try {
+      // Check if misuse report already exists
+      const checkResult = await transaction.request()
+        .input('reportId', sql.Int, reportId)
+        .query('SELECT MisuseID FROM MisuseReport WHERE ReportID = @reportId');
+
+      let misuseId;
+
+      if (checkResult.recordset.length > 0) {
+        // Existing report - add new filer
+        misuseId = checkResult.recordset[0].MisuseID;
+
+        await transaction.request()
+          .input('misuseId', sql.Int, misuseId)
+          .input('responseId', sql.Int, responseId)
+          .input('description', sql.VarChar(sql.MAX), description)
+          .query(`
+            INSERT INTO MisuseFiler (MisuseID, ResponseID, AdditionalDescription)
+            VALUES (@misuseId, @responseId, @description)
+          `);
+      } else {
+        // New report - create misuse report and first filer
+        const createResult = await transaction.request()
+          .input('reportId', sql.Int, reportId)
+          .input('misuseType', sql.VarChar(50), misuseType)
+          .input('description', sql.VarChar(sql.MAX), description)
+          .query(`
+            INSERT INTO MisuseReport (ReportID, MisuseType, InitialDescription)
+            OUTPUT INSERTED.MisuseID
+            VALUES (@reportId, @misuseType, @description)
+          `);
+
+        misuseId = createResult.recordset[0].MisuseID;
+
+        await transaction.request()
+          .input('misuseId', sql.Int, misuseId)
+          .input('responseId', sql.Int, responseId)
+          .query(`
+            INSERT INTO MisuseFiler (MisuseID, ResponseID)
+            VALUES (@misuseId, @responseId)
+          `);
+      }
+
+      await transaction.commit();
+      res.json({
+        success: true,
+        misuseId,
+        message: checkResult.recordset.length > 0
+          ? 'Added to existing misuse report'
+          : 'Created new misuse report'
+      });
+    } catch (err) {
+      await transaction.rollback();
+      throw err;
+    }
+  } catch (err) {
+    console.error('Error creating/updating misuse report:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
 
