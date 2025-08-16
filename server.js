@@ -1254,6 +1254,195 @@ app.get('/responders', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 });
+// New endpoint specifically for fetching user profile with photo
+app.get('/api/user/profile', async (req, res) => {
+  const userID = parseInt(req.query.userID);
+
+  if (!userID || isNaN(userID)) {
+    return res.status(400).json({ success: false, message: 'Missing or invalid userID.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('UserID', sql.Int, userID)
+      .query(`SELECT UserID, FullName, ProfilePhoto FROM [dbo].[Users] WHERE UserID = @UserID`);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    return res.status(200).json({ success: true, User: result.recordset[0] });
+  }
+  catch (err) {
+    console.error('Error fetching user profile:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+// New batch endpoint to fetch multiple user profiles at once
+app.post('/api/users/profiles/batch', async (req, res) => {
+  const { userIds } = req.body;
+
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    return res.status(400).json({ success: false, message: 'Missing or invalid userIds array.' });
+  }
+
+  // Validate all userIds are numbers and limit batch size for performance
+  const validUserIds = userIds.filter(id => typeof id === 'number' && !isNaN(id)).slice(0, 50);
+  if (validUserIds.length === 0) {
+    return res.status(400).json({ success: false, message: 'No valid userIds provided.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    // Create parameterized query for multiple IDs
+    const placeholders = validUserIds.map((_, index) => `@UserID${index}`).join(',');
+    const request = pool.request();
+
+    // Add parameters for each user ID
+    validUserIds.forEach((id, index) => {
+      request.input(`UserID${index}`, sql.Int, id);
+    });
+
+    const result = await request.query(`
+      SELECT UserID, FullName, ProfilePhoto 
+      FROM [dbo].[Users] 
+      WHERE UserID IN (${placeholders})
+    `);
+
+    return res.status(200).json({
+      success: true,
+      Users: result.recordset
+    });
+  }
+  catch (err) {
+    console.error('Error fetching user profiles batch:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+// New endpoint for responders with basic user info in single query
+app.get('/api/responders/with-profiles', async (req, res) => {
+  const reportId = parseInt(req.query.reportId);
+  if (!reportId || isNaN(reportId)) {
+    return res.status(400).json({ message: 'Missing or invalid reportId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('reportID', sql.BigInt, reportId)
+      .query(`
+        SELECT 
+          r.ResponseID,
+          r.UserID,
+          r.reportID,
+          r.res_Location,
+          r.res_Status,
+          u.FullName,
+          u.ProfilePhoto
+        FROM [dbo].[Response] r
+        LEFT JOIN [dbo].[Users] u ON r.UserID = u.UserID
+        WHERE r.reportID = @reportID
+        AND r.res_Status NOT IN ('Completed', 'Cancelled')
+      `);
+    res.json({ success: true, Response: result.recordset });
+  } catch (err) {
+    console.error('Error fetching responders with profiles:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+// New endpoint for minimal responder data (for frequent polling)
+app.get('/api/responders/minimal', async (req, res) => {
+  const reportId = parseInt(req.query.reportId);
+  if (!reportId || isNaN(reportId)) {
+    return res.status(400).json({ message: 'Missing or invalid reportId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('reportID', sql.BigInt, reportId)
+      .query(`
+        SELECT ResponseID, UserID, res_Status, res_Location
+        FROM [dbo].[Response]
+        WHERE reportID = @reportID
+        AND res_Status NOT IN ('Completed', 'Cancelled')
+      `);
+    res.json({ success: true, Response: result.recordset });
+  } catch (err) {
+    console.error('Error fetching minimal responders:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+// New endpoint to check for new responders (returns only UserIDs)
+app.get('/api/responders/check-new', async (req, res) => {
+  const reportId = parseInt(req.query.reportId);
+  const knownUserIds = req.query.knownUserIds ? req.query.knownUserIds.split(',').map(id => parseInt(id)).filter(id => !isNaN(id)) : [];
+
+  if (!reportId || isNaN(reportId)) {
+    return res.status(400).json({ message: 'Missing or invalid reportId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    let query = `
+      SELECT DISTINCT UserID
+      FROM [dbo].[Response]
+      WHERE reportID = @reportID
+      AND res_Status NOT IN ('Completed', 'Cancelled')
+    `;
+
+    const request = pool.request().input('reportID', sql.BigInt, reportId);
+
+    // If we have known user IDs, exclude them
+    if (knownUserIds.length > 0) {
+      const placeholders = knownUserIds.map((_, index) => `@KnownUserID${index}`).join(',');
+      knownUserIds.forEach((id, index) => {
+        request.input(`KnownUserID${index}`, sql.Int, id);
+      });
+      query += ` AND UserID NOT IN (${placeholders})`;
+    }
+
+    const result = await request.query(query);
+    const newUserIds = result.recordset.map(row => row.UserID);
+
+    res.json({ success: true, newUserIds });
+  } catch (err) {
+    console.error('Error checking for new responders:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
+// New endpoint for user basic info only (no profile photo)
+app.get('/api/user/basic', async (req, res) => {
+  const userID = parseInt(req.query.userID);
+
+  if (!userID || isNaN(userID)) {
+    return res.status(400).json({ success: false, message: 'Missing or invalid userID.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('UserID', sql.Int, userID)
+      .query(`SELECT UserID, FullName, Email, Username, UserType FROM [dbo].[Users] WHERE UserID = @UserID`);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    return res.status(200).json({ success: true, User: result.recordset[0] });
+  }
+  catch (err) {
+    console.error('Error fetching basic user info:', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
 
 
 app.post('/addMessage', async (req, res) => {
@@ -3107,7 +3296,7 @@ app.get('/api/leader/current', async (req, res) => {
 
 app.get('/api/votes/current', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
-  
+
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
@@ -3938,7 +4127,7 @@ app.get('/api/messages/:UserID/unread-count', requireAuth, async (req, res) => {
 // GET /api/sleep-status/:userId - Check if user is on break with broadcast restrictions
 app.get('/api/sleep-status/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
-  
+
   if (isNaN(userId)) {
     return res.status(400).json({
       success: false,
@@ -3948,7 +4137,7 @@ app.get('/api/sleep-status/:userId', async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    
+
     // Query the Sleep table for the user's current sleep status
     // Using SAST datetime function to compare with EndTime
     const result = await pool.request()
@@ -3978,7 +4167,7 @@ app.get('/api/sleep-status/:userId', async (req, res) => {
     }
 
     const sleepData = result.recordset[0];
-    
+
     // Return the current sleep status with time-adjusted OnBreak status
     res.json({
       success: true,
