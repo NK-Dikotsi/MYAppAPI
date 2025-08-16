@@ -2967,6 +2967,7 @@ app.get('/api/voting/settings', async (req, res) => {
     // Return defaults if no settings exist
     if (result.recordset.length === 0) {
       return res.json({
+        settingId: null,
         votingEnabled: false,
         startDate: null,
         endDate: null
@@ -2975,6 +2976,7 @@ app.get('/api/voting/settings', async (req, res) => {
 
     const settings = result.recordset[0];
     res.json({
+      settingId: settings.SettingID,
       votingEnabled: !!settings.VotingEnabled,
       startDate: settings.StartDate,
       endDate: settings.EndDate
@@ -2982,6 +2984,7 @@ app.get('/api/voting/settings', async (req, res) => {
   } catch (err) {
     console.error('Error fetching voting settings:', err);
     res.status(500).json({
+      settingId: null,
       votingEnabled: false,
       startDate: null,
       endDate: null
@@ -2989,23 +2992,28 @@ app.get('/api/voting/settings', async (req, res) => {
   }
 });
 
+
 app.post('/api/voting/settings', requireAuth, async (req, res) => {
   const { votingEnabled, startDate, endDate } = req.body;
   const updatedBy = req.session.user.id;
 
   try {
     const pool = await sql.connect(config);
-    await pool.request()
+    const result = await pool.request()
       .input('VotingEnabled', sql.Bit, votingEnabled)
       .input('StartDate', sql.DateTime, startDate)
       .input('EndDate', sql.DateTime, endDate)
       .input('UpdatedBy', sql.Int, updatedBy)
       .query(`
         INSERT INTO VotingSettings (VotingEnabled, StartDate, EndDate, UpdatedBy)
+        OUTPUT INSERTED.SettingID
         VALUES (@VotingEnabled, @StartDate, @EndDate, @UpdatedBy)
       `);
 
-    res.json({ success: true });
+    res.json({ 
+      success: true,
+      settingId: result.recordset[0].SettingID
+    });
   } catch (err) {
     console.error('Error updating voting settings:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -3024,7 +3032,17 @@ app.post('/api/nominations', requireAuth, async (req, res) => {
   try {
     const pool = await sql.connect(config);
 
-    // First find the nominee user
+    // First get the current active voting setting
+    const settingsResult = await pool.request()
+      .query('SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC');
+
+    if (settingsResult.recordset.length === 0) {
+      return res.status(400).json({ error: 'No active voting session found' });
+    }
+
+    const currentSettingId = settingsResult.recordset[0].SettingID;
+
+    // Find the nominee user
     const nomineeResult = await pool.request()
       .input('Username', sql.NVarChar(50), nomineeUsername)
       .query('SELECT UserID FROM Users WHERE Username = @Username');
@@ -3040,17 +3058,18 @@ app.post('/api/nominations', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'You cannot nominate yourself' });
     }
 
-    // Check if nomination already exists
+    // Check if nomination already exists for this voting session
     const existingNomination = await pool.request()
       .input('NomineeID', sql.Int, nomineeId)
       .input('NominatedBy', sql.Int, nominatedBy)
+      .input('SettingID', sql.Int, currentSettingId)
       .query(`
         SELECT NominationID FROM Nominations 
-        WHERE NomineeID = @NomineeID AND NominatedBy = @NominatedBy
+        WHERE NomineeID = @NomineeID AND NominatedBy = @NominatedBy AND SettingID = @SettingID
       `);
 
     if (existingNomination.recordset.length > 0) {
-      return res.status(400).json({ error: 'You have already nominated this person' });
+      return res.status(400).json({ error: 'You have already nominated this person in the current voting session' });
     }
 
     // Create new nomination
@@ -3058,10 +3077,11 @@ app.post('/api/nominations', requireAuth, async (req, res) => {
       .input('NomineeID', sql.Int, nomineeId)
       .input('NominatedBy', sql.Int, nominatedBy)
       .input('Message', sql.NVarChar(255), message || null)
+      .input('SettingID', sql.Int, currentSettingId)
       .query(`
-        INSERT INTO Nominations (NomineeID, NominatedBy, Message)
+        INSERT INTO Nominations (NomineeID, NominatedBy, Message, SettingID)
         OUTPUT INSERTED.NominationID
-        VALUES (@NomineeID, @NominatedBy, @Message)
+        VALUES (@NomineeID, @NominatedBy, @Message, @SettingID)
       `);
 
     res.status(201).json({
@@ -3079,8 +3099,20 @@ app.get('/api/nominations/pending', requireAuth, async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
+    
+    // Get current voting session
+    const settingsResult = await pool.request()
+      .query('SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC');
+
+    if (settingsResult.recordset.length === 0) {
+      return res.json([]);
+    }
+
+    const currentSettingId = settingsResult.recordset[0].SettingID;
+
     const result = await pool.request()
       .input('UserID', sql.Int, userId)
+      .input('SettingID', sql.Int, currentSettingId)
       .query(`
         SELECT 
           n.NominationID,
@@ -3091,12 +3123,15 @@ app.get('/api/nominations/pending', requireAuth, async (req, res) => {
           u.Username as NominatorUsername
         FROM Nominations n
         JOIN Users u ON n.NominatedBy = u.UserID
-        WHERE n.NomineeID = @UserID AND n.Status = 'pending'
+        WHERE n.NomineeID = @UserID 
+          AND n.Status = 'pending' 
+          AND n.SettingID = @SettingID
         ORDER BY n.NominatedAt DESC
       `);
 
     console.log('Pending nominations query result:', {
       userId,
+      currentSettingId,
       recordCount: result.recordset.length,
       records: result.recordset
     });
@@ -3154,8 +3189,6 @@ app.post('/api/nominations/respond', requireAuth, async (req, res) => {
   }
 });
 
-// Fixed Voting endpoints
-// Fixed Voting endpoints
 app.post('/api/votes', requireAuth, async (req, res) => {
   const { nominationId } = req.body;
   const voterId = req.session.user.id;
@@ -3167,11 +3200,15 @@ app.post('/api/votes', requireAuth, async (req, res) => {
   try {
     const pool = await sql.connect(config);
 
-    // Check if voting is enabled and within period
-    const settings = await pool.request()
-      .query('SELECT TOP 1 VotingEnabled, StartDate, EndDate FROM VotingSettings ORDER BY SettingID DESC');
+    // Get current voting session and check if voting is enabled
+    const settingsResult = await pool.request()
+      .query('SELECT TOP 1 SettingID, VotingEnabled, StartDate, EndDate FROM VotingSettings ORDER BY SettingID DESC');
 
-    const votingSettings = settings.recordset[0] || { VotingEnabled: false };
+    if (settingsResult.recordset.length === 0) {
+      return res.status(403).json({ error: 'No voting session found' });
+    }
+
+    const votingSettings = settingsResult.recordset[0];
 
     if (!votingSettings.VotingEnabled) {
       return res.status(403).json({ error: 'Voting is not currently enabled' });
@@ -3187,16 +3224,19 @@ app.post('/api/votes', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Voting has ended' });
     }
 
-    // Check if nomination exists and is accepted
+    // Check if nomination exists, is accepted, and belongs to current voting session
     const nominationCheck = await pool.request()
       .input('NominationID', sql.Int, nominationId)
+      .input('SettingID', sql.Int, votingSettings.SettingID)
       .query(`
         SELECT NomineeID FROM Nominations 
-        WHERE NominationID = @NominationID AND Status = 'accepted'
+        WHERE NominationID = @NominationID 
+          AND Status = 'accepted' 
+          AND SettingID = @SettingID
       `);
 
     if (nominationCheck.recordset.length === 0) {
-      return res.status(400).json({ error: 'Nomination not found or not accepted' });
+      return res.status(400).json({ error: 'Nomination not found, not accepted, or not part of current voting session' });
     }
 
     // Check if user is trying to vote for themselves
@@ -3205,16 +3245,21 @@ app.post('/api/votes', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'You cannot vote for yourself' });
     }
 
-    // Check if user has already voted
+    // Check if user has already voted in this voting session
     const existingVote = await pool.request()
       .input('VoterID', sql.Int, voterId)
-      .query('SELECT VoteID FROM Votes WHERE VoterID = @VoterID');
+      .query(`
+        SELECT v.VoteID FROM Votes v
+        JOIN Nominations n ON v.NomineeID = n.NominationID
+        WHERE v.VoterID = @VoterID AND n.SettingID = @SettingID
+      `)
+      .input('SettingID', sql.Int, votingSettings.SettingID);
 
     if (existingVote.recordset.length > 0) {
-      return res.status(400).json({ error: 'You have already voted' });
+      return res.status(400).json({ error: 'You have already voted in this election' });
     }
 
-    // Record the vote - FIXED: Use correct field mapping
+    // Record the vote - using the corrected relationship
     await pool.request()
       .input('VoterID', sql.Int, voterId)
       .input('NominationID', sql.Int, nominationId)
@@ -3230,11 +3275,24 @@ app.post('/api/votes', requireAuth, async (req, res) => {
   }
 });
 
+
 // Fixed Results endpoint
 app.get('/api/votes/results', async (req, res) => {
   try {
     const pool = await sql.connect(config);
+    
+    // Get current voting session
+    const settingsResult = await pool.request()
+      .query('SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC');
+
+    if (settingsResult.recordset.length === 0) {
+      return res.json([]);
+    }
+
+    const currentSettingId = settingsResult.recordset[0].SettingID;
+
     const result = await pool.request()
+      .input('SettingID', sql.Int, currentSettingId)
       .query(`
         SELECT 
           n.NominationID,
@@ -3246,7 +3304,7 @@ app.get('/api/votes/results', async (req, res) => {
         FROM Nominations n
         JOIN Users u ON n.NomineeID = u.UserID
         LEFT JOIN Votes v ON n.NominationID = v.NomineeID
-        WHERE n.Status = 'accepted'
+        WHERE n.Status = 'accepted' AND n.SettingID = @SettingID
         GROUP BY n.NominationID, u.UserID, u.FullName, u.Username, u.ProfilePhoto
         ORDER BY VoteCount DESC, u.FullName ASC
       `);
@@ -3272,7 +3330,19 @@ app.get('/api/votes/results', async (req, res) => {
 app.get('/api/leader/current', async (req, res) => {
   try {
     const pool = await sql.connect(config);
+    
+    // Get current voting session
+    const settingsResult = await pool.request()
+      .query('SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC');
+
+    if (settingsResult.recordset.length === 0) {
+      return res.status(404).json({ error: 'No voting session found' });
+    }
+
+    const currentSettingId = settingsResult.recordset[0].SettingID;
+
     const result = await pool.request()
+      .input('SettingID', sql.Int, currentSettingId)
       .query(`
         SELECT TOP 1
           u.UserID,
@@ -3283,7 +3353,7 @@ app.get('/api/leader/current', async (req, res) => {
         FROM Nominations n
         JOIN Users u ON n.NomineeID = u.UserID
         LEFT JOIN Votes v ON n.NominationID = v.NomineeID
-        WHERE n.Status = 'accepted'
+        WHERE n.Status = 'accepted' AND n.SettingID = @SettingID
         GROUP BY u.UserID, u.FullName, u.Username, u.ProfilePhoto
         HAVING COUNT(v.VoteID) > 0
         ORDER BY VoteCount DESC
@@ -3307,19 +3377,33 @@ app.get('/api/leader/current', async (req, res) => {
   }
 });
 
+
 app.get('/api/votes/current', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
 
   try {
     const pool = await sql.connect(config);
+    
+    // Get current voting session
+    const settingsResult = await pool.request()
+      .query('SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC');
+
+    if (settingsResult.recordset.length === 0) {
+      return res.json({ vote: null });
+    }
+
+    const currentSettingId = settingsResult.recordset[0].SettingID;
+
     const result = await pool.request()
       .input('VoterID', sql.Int, userId)
+      .input('SettingID', sql.Int, currentSettingId)
       .query(`
         SELECT 
           v.VoteID,
           v.NomineeID as nominationId
         FROM Votes v
-        WHERE v.VoterID = @VoterID
+        JOIN Nominations n ON v.NomineeID = n.NominationID
+        WHERE v.VoterID = @VoterID AND n.SettingID = @SettingID
       `);
 
     if (result.recordset.length === 0) {
