@@ -4371,7 +4371,35 @@ app.put('/api/voting-settings/check-expiry', async (req, res) => {
   }
 });
 
-
+// Check if voting session has ended
+app.get('/api/voting-settings/has-ended', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    
+    // Get current SAST time from database function
+    const currentTimeResult = await pool.request().query('SELECT dbo.GetSASTDateTime() AS CurrentTime');
+    const currentTime = currentTimeResult.recordset[0].CurrentTime;
+    
+    // Get the latest voting settings
+    const settingsResult = await pool.request().query(`
+      SELECT TOP 1 EndDate 
+      FROM VotingSettings 
+      ORDER BY SettingID DESC
+    `);
+    
+    if (settingsResult.recordset.length === 0) {
+      return res.json({ hasEnded: false });
+    }
+    
+    const endDate = settingsResult.recordset[0].EndDate;
+    const hasEnded = new Date(currentTime) > new Date(endDate);
+    
+    res.json({ hasEnded });
+  } catch (err) {
+    console.error('Error checking session end:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
 
