@@ -3935,6 +3935,73 @@ app.get('/api/messages/:UserID/unread-count', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/sleep-status/:userId - Check if user is on break with broadcast restrictions
+app.get('/api/sleep-status/:userId', async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  
+  if (isNaN(userId)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid user ID'
+    });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    
+    // Query the Sleep table for the user's current sleep status
+    // Using SAST datetime function to compare with EndTime
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT TOP 1 
+          UserID, 
+          OnBreak, 
+          SleepType, 
+          EndTime,
+          CASE 
+            WHEN EndTime IS NOT NULL AND dbo.GetSASTDateTime() > EndTime THEN 'No'
+            ELSE OnBreak
+          END AS CurrentOnBreak
+        FROM Sleep 
+        WHERE UserID = @UserID
+        ORDER BY EndTime DESC
+      `);
+
+    if (result.recordset.length === 0) {
+      // No sleep record found - user is not restricted
+      return res.json({
+        success: true,
+        sleepData: null,
+        message: 'No sleep restrictions found'
+      });
+    }
+
+    const sleepData = result.recordset[0];
+    
+    // Return the current sleep status with time-adjusted OnBreak status
+    res.json({
+      success: true,
+      sleepData: {
+        UserID: sleepData.UserID,
+        OnBreak: sleepData.CurrentOnBreak,
+        SleepType: sleepData.SleepType,
+        EndTime: sleepData.EndTime
+      },
+      message: 'Sleep status retrieved successfully'
+    });
+
+  } catch (err) {
+    console.error('Error checking sleep status:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Server error checking sleep status'
+    });
+  }
+});
+
+
+
 
 //******************Manage users ENDPOINTS ADMIN********************//
 
