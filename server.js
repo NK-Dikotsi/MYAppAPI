@@ -2958,6 +2958,7 @@ app.get('/trusted/count', async (req, res) => {
 
 /************************************VOTING SYSTEM************************************** */
 // Fixed Voting settings endpoints
+// Voting settings endpoints
 app.get('/api/voting/settings', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -2992,7 +2993,6 @@ app.get('/api/voting/settings', async (req, res) => {
   }
 });
 
-
 app.post('/api/voting/settings', requireAuth, async (req, res) => {
   const { votingEnabled, startDate, endDate } = req.body;
   const updatedBy = req.session.user.id;
@@ -3020,7 +3020,7 @@ app.post('/api/voting/settings', requireAuth, async (req, res) => {
   }
 });
 
-// Fixed Nomination endpoints
+// Nomination endpoints
 app.post('/api/nominations', requireAuth, async (req, res) => {
   const { nomineeUsername, message } = req.body;
   const nominatedBy = req.session.user.id;
@@ -3189,7 +3189,7 @@ app.post('/api/nominations/respond', requireAuth, async (req, res) => {
   }
 });
 
-// Updated Votes endpoint
+// CORRECTED Votes endpoint - This was the problematic one
 app.post('/api/votes', requireAuth, async (req, res) => {
   const { nominationId } = req.body;
   const voterId = req.session.user.id;
@@ -3246,17 +3246,20 @@ app.post('/api/votes', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'You cannot vote for yourself' });
     }
 
-    // Check if user has already voted in this voting session
-    const existingVote = await pool.request()
+    // CORRECTED: Check if user has already voted in current voting session
+    // This query was the source of the error - now properly structured
+    const existingVoteCheck = await pool.request()
       .input('VoterID', sql.Int, voterId)
-      .input('SettingID', sql.Int, votingSettings.SettingID)
       .query(`
-        SELECT v.VoteID FROM Votes v
+        SELECT v.VoteID 
+        FROM Votes v
         JOIN Nominations n ON v.NomineeID = n.NominationID
-        WHERE v.VoterID = @VoterID AND n.SettingID = @SettingID
+        JOIN VotingSettings vs ON n.SettingID = vs.SettingID
+        WHERE v.VoterID = @VoterID 
+          AND vs.SettingID = (SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC)
       `);
 
-    if (existingVote.recordset.length > 0) {
+    if (existingVoteCheck.recordset.length > 0) {
       return res.status(400).json({ error: 'You have already voted in this election' });
     }
 
@@ -3276,7 +3279,7 @@ app.post('/api/votes', requireAuth, async (req, res) => {
   }
 });
 
-// Fixed Results endpoint
+// Results endpoint
 app.get('/api/votes/results', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -3326,7 +3329,7 @@ app.get('/api/votes/results', async (req, res) => {
   }
 });
 
-// Fixed Current leader endpoint
+// Current leader endpoint
 app.get('/api/leader/current', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -3377,7 +3380,7 @@ app.get('/api/leader/current', async (req, res) => {
   }
 });
 
-
+// Current vote endpoint
 app.get('/api/votes/current', requireAuth, async (req, res) => {
   const userId = req.session.user.id;
 
@@ -3422,8 +3425,6 @@ app.get('/api/votes/current', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-
 
 
 
