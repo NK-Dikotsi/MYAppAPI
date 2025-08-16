@@ -3012,13 +3012,12 @@ app.post('/api/votes', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'You have already voted' });
     }
 
-    // FIXED: Record the vote with correct field mapping
-    // The issue was using NomineeID instead of NominationID in the INSERT
+    // Record the vote - FIXED: Use correct field mapping
     await pool.request()
       .input('VoterID', sql.Int, voterId)
       .input('NominationID', sql.Int, nominationId)
       .query(`
-        INSERT INTO Votes (VoterID, NominationID)
+        INSERT INTO Votes (VoterID, NomineeID)
         VALUES (@VoterID, @NominationID)
       `);
 
@@ -3028,6 +3027,7 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 // Fixed Results endpoint
 app.get('/api/votes/results', async (req, res) => {
   try {
@@ -3043,7 +3043,7 @@ app.get('/api/votes/results', async (req, res) => {
           COUNT(v.VoteID) AS VoteCount
         FROM Nominations n
         JOIN Users u ON n.NomineeID = u.UserID
-        LEFT JOIN Votes v ON n.NominationID = v.NominationID
+        LEFT JOIN Votes v ON n.NominationID = v.NomineeID
         WHERE n.Status = 'accepted'
         GROUP BY n.NominationID, u.UserID, u.FullName, u.Username, u.ProfilePhoto
         ORDER BY VoteCount DESC, u.FullName ASC
@@ -3080,7 +3080,7 @@ app.get('/api/leader/current', async (req, res) => {
           COUNT(v.VoteID) AS VoteCount
         FROM Nominations n
         JOIN Users u ON n.NomineeID = u.UserID
-        LEFT JOIN Votes v ON n.NominationID = v.NominationID
+        LEFT JOIN Votes v ON n.NominationID = v.NomineeID
         WHERE n.Status = 'accepted'
         GROUP BY u.UserID, u.FullName, u.Username, u.ProfilePhoto
         HAVING COUNT(v.VoteID) > 0
