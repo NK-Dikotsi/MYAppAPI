@@ -3189,6 +3189,7 @@ app.post('/api/nominations/respond', requireAuth, async (req, res) => {
   }
 });
 
+// Updated Votes endpoint
 app.post('/api/votes', requireAuth, async (req, res) => {
   const { nominationId } = req.body;
   const voterId = req.session.user.id;
@@ -3248,12 +3249,12 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     // Check if user has already voted in this voting session
     const existingVote = await pool.request()
       .input('VoterID', sql.Int, voterId)
+      .input('SettingID', sql.Int, votingSettings.SettingID)
       .query(`
         SELECT v.VoteID FROM Votes v
         JOIN Nominations n ON v.NomineeID = n.NominationID
         WHERE v.VoterID = @VoterID AND n.SettingID = @SettingID
-      `)
-      .input('SettingID', sql.Int, votingSettings.SettingID);
+      `);
 
     if (existingVote.recordset.length > 0) {
       return res.status(400).json({ error: 'You have already voted in this election' });
@@ -3274,7 +3275,6 @@ app.post('/api/votes', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
 
 // Fixed Results endpoint
 app.get('/api/votes/results', async (req, res) => {
