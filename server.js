@@ -3010,7 +3010,7 @@ app.post('/api/voting/settings', requireAuth, async (req, res) => {
         VALUES (@VotingEnabled, @StartDate, @EndDate, @UpdatedBy)
       `);
 
-    res.json({ 
+    res.json({
       success: true,
       settingId: result.recordset[0].SettingID
     });
@@ -3099,7 +3099,7 @@ app.get('/api/nominations/pending', requireAuth, async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    
+
     // Get current voting session
     const settingsResult = await pool.request()
       .query('SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC');
@@ -3280,7 +3280,7 @@ app.post('/api/votes', requireAuth, async (req, res) => {
 app.get('/api/votes/results', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     // Get current voting session
     const settingsResult = await pool.request()
       .query('SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC');
@@ -3330,7 +3330,7 @@ app.get('/api/votes/results', async (req, res) => {
 app.get('/api/leader/current', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     // Get current voting session
     const settingsResult = await pool.request()
       .query('SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC');
@@ -3383,7 +3383,7 @@ app.get('/api/votes/current', requireAuth, async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    
+
     // Get current voting session
     const settingsResult = await pool.request()
       .query('SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC');
@@ -3422,6 +3422,74 @@ app.get('/api/votes/current', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+app.get('/getResponse', async (req, res) => {
+  try {
+    const { UserID, reportID } = req.query;
+
+    // Validate required parameters
+    if (!UserID || !reportID) {
+      return res.status(400).json({
+        error: 'Missing required parameters',
+        message: 'Both UserID and reportID are required'
+      });
+    }
+
+    // Validate parameters are numbers
+    if (isNaN(UserID) || isNaN(reportID)) {
+      return res.status(400).json({
+        error: 'Invalid parameter type',
+        message: 'UserID and reportID must be valid integers'
+      });
+    }
+
+    // SQL query to find ResponseID
+    const query = `
+            SELECT ResponseID 
+            FROM Response 
+            WHERE UserID = @UserID AND reportID = @reportID
+        `;
+
+    // Create a new request
+    const request = new sql.Request();
+    request.input('UserID', sql.Int, parseInt(UserID));
+    request.input('reportID', sql.Int, parseInt(reportID));
+
+    // Execute the query
+    const result = await request.query(query);
+
+    // Check if any records were found
+    if (result.recordset.length === 0) {
+      return res.status(404).json({
+        error: 'Not found',
+        message: 'No response found for the given UserID and reportID'
+      });
+    }
+
+    // Return the ResponseID(s)
+    const responseIDs = result.recordset.map(row => row.ResponseID);
+
+    // If only one result, return it directly, otherwise return array
+    if (responseIDs.length === 1) {
+      res.json({
+        success: true,
+        ResponseID: responseIDs[0]
+      });
+    } else {
+      res.json({
+        success: true,
+        ResponseIDs: responseIDs
+      });
+    }
+
+  } catch (error) {
+    console.error('Database error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: 'Failed to retrieve response data'
+    });
+  }
+});
+
 
 
 
@@ -4287,7 +4355,7 @@ app.get('/api/sleep-status/:userId', async (req, res) => {
 // Promote a user to Community Leader
 app.put('/api/community-members/:userId/promote', async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
-  
+
   if (!userId || isNaN(userId)) {
     return res.status(400).json({ error: 'Invalid user ID' });
   }
@@ -4310,7 +4378,7 @@ app.put('/api/community-members/:userId/promote', async (req, res) => {
         
         SELECT * FROM CommunityMember WHERE UserID = @userId
       `);
-    
+
     if (result.recordset.length > 0) {
       res.json({
         success: true,
@@ -4330,11 +4398,11 @@ app.put('/api/community-members/:userId/promote', async (req, res) => {
 app.put('/api/voting-settings/check-expiry', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     // 1. Get current SAST time from database function
     const currentTimeResult = await pool.request().query('SELECT dbo.GetSASTDateTime() AS CurrentTime');
     const currentTime = currentTimeResult.recordset[0].CurrentTime;
-    
+
     // 2. Check for active sessions that have ended
     const result = await pool.request().query(`
       UPDATE VotingSettings
@@ -4349,18 +4417,18 @@ app.put('/api/voting-settings/check-expiry', async (req, res) => {
       
       SELECT @@ROWCOUNT AS UpdatedCount
     `);
-    
+
     const updatedCount = result.recordset[0].UpdatedCount;
-    
+
     if (updatedCount > 0) {
-      res.json({ 
-        success: true, 
+      res.json({
+        success: true,
         message: 'Disabled expired voting session',
         updatedCount
       });
     } else {
-      res.json({ 
-        success: true, 
+      res.json({
+        success: true,
         message: 'No active sessions to expire',
         updatedCount: 0
       });
@@ -4375,25 +4443,25 @@ app.put('/api/voting-settings/check-expiry', async (req, res) => {
 app.get('/api/voting-settings/has-ended', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     // Get current SAST time from database function
     const currentTimeResult = await pool.request().query('SELECT dbo.GetSASTDateTime() AS CurrentTime');
     const currentTime = currentTimeResult.recordset[0].CurrentTime;
-    
+
     // Get the latest voting settings
     const settingsResult = await pool.request().query(`
       SELECT TOP 1 EndDate 
       FROM VotingSettings 
       ORDER BY SettingID DESC
     `);
-    
+
     if (settingsResult.recordset.length === 0) {
       return res.json({ hasEnded: false });
     }
-    
+
     const endDate = settingsResult.recordset[0].EndDate;
     const hasEnded = new Date(currentTime) > new Date(endDate);
-    
+
     res.json({ hasEnded });
   } catch (err) {
     console.error('Error checking session end:', err);
