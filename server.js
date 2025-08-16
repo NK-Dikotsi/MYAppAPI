@@ -5463,14 +5463,23 @@ app.get('/api/voting-settings', async (req, res) => {
     `);
 
     if (result.recordset.length > 0) {
-      res.json(result.recordset[0]);
+      // Format dates to ISO strings
+      const settings = {
+        ...result.recordset[0],
+        StartDate: new Date(result.recordset[0].StartDate).toISOString(),
+        EndDate: new Date(result.recordset[0].EndDate).toISOString(),
+        UpdatedAt: new Date(result.recordset[0].UpdatedAt).toISOString()
+      };
+      res.json(settings);
     } else {
       // Return default settings if none exist
-      res.json({
+      const defaultSettings = {
         VotingEnabled: false,
-        StartDate: new Date(),
-        EndDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      });
+        StartDate: new Date().toISOString(),
+        EndDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        SettingID: 0
+      };
+      res.json(defaultSettings);
     }
   } catch (err) {
     console.error('Error fetching voting settings:', err);
@@ -5478,7 +5487,7 @@ app.get('/api/voting-settings', async (req, res) => {
   }
 });
 
-// Update voting settings
+// Update voting settings - USING dbo.GetSASTDateTime()
 app.put('/api/voting-settings', async (req, res) => {
   const { VotingEnabled, StartDate, EndDate, UpdatedBy } = req.body;
 
@@ -5490,29 +5499,37 @@ app.put('/api/voting-settings', async (req, res) => {
       .input('EndDate', sql.DateTime, new Date(EndDate))
       .input('UpdatedBy', sql.Int, UpdatedBy)
       .query(`
-        UPDATE VotingSettings SET
-          VotingEnabled = @VotingEnabled,
-          StartDate = @StartDate,
-          EndDate = @EndDate,
-          UpdatedBy = @UpdatedBy,
-          UpdatedAt = GETDATE()
-        WHERE SettingID = (SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC)
+        -- Check if a setting exists
+        DECLARE @currentSettingID INT;
+        SELECT TOP 1 @currentSettingID = SettingID 
+        FROM VotingSettings 
+        ORDER BY SettingID DESC;
         
-        IF @@ROWCOUNT = 0
+        IF @currentSettingID IS NOT NULL
         BEGIN
-          INSERT INTO VotingSettings (
-            VotingEnabled, 
-            StartDate, 
-            EndDate, 
-            UpdatedBy,
-            UpdatedAt
-          ) VALUES (
-            @VotingEnabled,
-            @StartDate,
-            @EndDate,
-            @UpdatedBy,
-            GETDATE()
-          )
+            UPDATE VotingSettings SET
+              VotingEnabled = @VotingEnabled,
+              StartDate = @StartDate,
+              EndDate = @EndDate,
+              UpdatedBy = @UpdatedBy,
+              UpdatedAt = dbo.GetSASTDateTime()  -- CHANGED HERE
+            WHERE SettingID = @currentSettingID
+        END
+        ELSE
+        BEGIN
+            INSERT INTO VotingSettings (
+              VotingEnabled, 
+              StartDate, 
+              EndDate, 
+              UpdatedBy,
+              UpdatedAt
+            ) VALUES (
+              @VotingEnabled,
+              @StartDate,
+              @EndDate,
+              @UpdatedBy,
+              dbo.GetSASTDateTime()  -- CHANGED HERE
+            )
         END
       `);
 
@@ -5522,7 +5539,8 @@ app.put('/api/voting-settings', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-// Get all nominations with vote counts (CORRECTED)
+
+// Get all nominations with vote counts
 app.get('/api/nominations', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -5535,29 +5553,7 @@ app.get('/api/nominations', async (req, res) => {
         SELECT NomineeID, COUNT(*) AS VoteCount
         FROM Votes
         GROUP BY NomineeID
-      ) v ON n.NominationID = v.NomineeID  -- CHANGED THIS LINE
-      ORDER BY n.NominatedAt DESC
-    `);
-    res.json(result.recordset);
-  } catch (err) {
-    console.error('Error fetching nominations:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-// Get all nominations with vote counts (CORRECTED)
-app.get('/api/nominations', async (req, res) => {
-  try {
-    const pool = await sql.connect(config);
-    const result = await pool.request().query(`
-      SELECT 
-        n.*,
-        COALESCE(v.VoteCount, 0) AS VoteCount
-      FROM Nominations n
-      LEFT JOIN (
-        SELECT NomineeID, COUNT(*) AS VoteCount
-        FROM Votes
-        GROUP BY NomineeID
-      ) v ON n.NominationID = v.NomineeID  -- CHANGED THIS LINE
+      ) v ON n.NominationID = v.NomineeID
       ORDER BY n.NominatedAt DESC
     `);
     res.json(result.recordset);
@@ -5583,7 +5579,7 @@ app.get('/api/votes', async (req, res) => {
   }
 });
 
-// Get users (simplified version for nomination display)
+// Get users (simplified version)
 app.get('/api/users-minimal', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -5612,7 +5608,6 @@ app.get('/api/votes/count', async (req, res) => {
 
     const counts = {};
     result.recordset.forEach(row => {
-      // Convert NomineeID to integer
       const nomineeId = parseInt(row.NomineeID, 10);
       counts[nomineeId] = row.VoteCount;
     });
