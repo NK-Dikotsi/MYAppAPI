@@ -3246,20 +3246,17 @@ app.post('/api/votes', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'You cannot vote for yourself' });
     }
 
-    // CORRECTED: Check if user has already voted in current voting session
-    // This query was the source of the error - now properly structured
-    const existingVoteCheck = await pool.request()
+    // Check if user has already voted in this voting session
+    const existingVote = await pool.request()
       .input('VoterID', sql.Int, voterId)
+      .input('SettingID', sql.Int, votingSettings.SettingID)
       .query(`
-        SELECT v.VoteID 
-        FROM Votes v
+        SELECT v.VoteID FROM Votes v
         JOIN Nominations n ON v.NomineeID = n.NominationID
-        JOIN VotingSettings vs ON n.SettingID = vs.SettingID
-        WHERE v.VoterID = @VoterID 
-          AND vs.SettingID = (SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC)
+        WHERE v.VoterID = @VoterID AND n.SettingID = @SettingID
       `);
 
-    if (existingVoteCheck.recordset.length > 0) {
+    if (existingVote.recordset.length > 0) {
       return res.status(400).json({ error: 'You have already voted in this election' });
     }
 
