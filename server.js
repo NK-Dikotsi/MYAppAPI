@@ -6147,7 +6147,7 @@ app.get('/getDatesByEmergencyType', async (req, res) => {
     const result = await pool.request()
       .input('emergencyType', sql.VarChar, emergencyType)
       .query(`
-        SELECT dateReported
+        SELECT dateReported, suburbName
         FROM [dbo].[Report]
         WHERE emergencyType = @emergencyType
       `);
@@ -6155,7 +6155,7 @@ app.get('/getDatesByEmergencyType', async (req, res) => {
     res.status(200).json({
       success: true,
       emergencyType,
-      dates: result.recordset
+      data: result.recordset // now each record has { dateReported, suburbName }
     });
 
   } catch (err) {
@@ -6163,4 +6163,5 @@ app.get('/getDatesByEmergencyType', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
