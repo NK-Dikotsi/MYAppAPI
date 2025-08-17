@@ -6134,3 +6134,33 @@ app.get('/api/support/stats', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+app.get('/getDatesByEmergencyType', async (req, res) => {
+  const { emergencyType } = req.query; // expects ?emergencyType=Fire
+
+  try {
+    const pool = await sql.connect(config);
+
+    if (!emergencyType) {
+      return res.status(400).json({ message: "Missing emergencyType in query." });
+    }
+
+    const result = await pool.request()
+      .input('emergencyType', sql.VarChar, emergencyType)
+      .query(`
+        SELECT dateReported
+        FROM [dbo].[Report]
+        WHERE emergencyType = @emergencyType
+      `);
+
+    res.status(200).json({
+      success: true,
+      emergencyType,
+      dates: result.recordset
+    });
+
+  } catch (err) {
+    console.error("Error fetching dates:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
