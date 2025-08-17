@@ -6149,12 +6149,12 @@ app.get('/getDatesByEmergencyType', async (req, res) => {
       .query(`
         SELECT 
           suburbName,
-          CAST(dateReported AS DATE) AS reportDate,
+          MIN(dateReported) AS firstReportTime, -- use MAX(dateReported) if you want latest
           COUNT(*) AS reportCount
         FROM [dbo].[Report]
         WHERE emergencyType = @emergencyType
-        GROUP BY suburbName, CAST(dateReported AS DATE)
-        ORDER BY reportDate ASC
+        GROUP BY suburbName
+        ORDER BY suburbName ASC
       `);
 
     res.status(200).json({
