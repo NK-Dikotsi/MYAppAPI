@@ -6147,21 +6147,27 @@ app.get('/getDatesByEmergencyType', async (req, res) => {
     const result = await pool.request()
       .input('emergencyType', sql.VarChar, emergencyType)
       .query(`
-        SELECT dateReported, suburbName
+        SELECT 
+          suburbName,
+          CAST(dateReported AS DATE) AS reportDate,
+          COUNT(*) AS reportCount
         FROM [dbo].[Report]
         WHERE emergencyType = @emergencyType
+        GROUP BY suburbName, CAST(dateReported AS DATE)
+        ORDER BY reportDate ASC
       `);
 
     res.status(200).json({
       success: true,
       emergencyType,
-      data: result.recordset // now each record has { dateReported, suburbName }
+      data: result.recordset
     });
 
   } catch (err) {
-    console.error("Error fetching dates:", err);
+    console.error("Error fetching grouped data:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 
