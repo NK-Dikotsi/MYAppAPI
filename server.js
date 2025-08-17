@@ -5618,7 +5618,7 @@ app.get('/api/analytics/type', async (req, res) => {
     const query = `
       SELECT 
         CASE 
-          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS') 
+          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS',  'Suspicious Activity') 
             THEN emergencyType
           ELSE 'Other'
         END AS type,
@@ -5626,7 +5626,7 @@ app.get('/api/analytics/type', async (req, res) => {
       FROM Report
       GROUP BY 
         CASE 
-          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS') 
+          WHEN emergencyType IN ('Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS',  'Suspicious Activity') 
             THEN emergencyType
           ELSE 'Other'
         END
@@ -5635,7 +5635,7 @@ app.get('/api/analytics/type', async (req, res) => {
     const result = await pool.request().query(query);
 
     // Define required types in specific order
-    const requiredTypes = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS', 'Other'];
+    const requiredTypes = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS',  'Suspicious Activity', 'Other'];
     const typeCounts = {};
 
     // Initialize with zeros
