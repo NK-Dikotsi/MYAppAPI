@@ -4461,6 +4461,39 @@ app.get('/api/sleep-status/:userId', async (req, res) => {
     });
   }
 });
+app.get('/isUserOnSleep', async (req, res) => {
+  const userID = parseInt(req.query.userID);
+
+  if (!userID || isNaN(userID)) {
+    return res.status(400).json({ success: false, message: 'Invalid or missing userID' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('UserID', sql.Int, userID)
+      .query(`
+        SELECT TOP 1 EndTime
+        FROM Sleep
+        WHERE UserID = @UserID
+          AND OnBreak = 'Yes'
+          AND SleepType IN ('Report', 'Both')
+          AND EndTime > dbo.GetSASTDateTime()
+        ORDER BY EndTime DESC
+      `);
+
+    if (result.recordset.length > 0) {
+      return res.json({ success: true, onSleep: true, endTime: result.recordset[0].EndTime });
+    } else {
+      return res.json({ success: true, onSleep: false });
+    }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 
 // Promote a user to Community Leader
 app.put('/api/community-members/:userId/promote', async (req, res) => {
