@@ -4796,7 +4796,6 @@ app.get('/api/community/count', async (req, res) => {
 });
 
 // put users to sleep
-// put users to sleep
 app.post('/api/sleep', async (req, res) => {
   const { userId, durationHours, sleepType } = req.body;
 
@@ -4807,21 +4806,13 @@ app.post('/api/sleep', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     
-    // Execute stored procedure to get SAST datetime
-    const sastResult = await pool.request().query('EXEC dbo.GetSASTDateTime');
+    // Get current UTC time
+    const utcNow = new Date();
     
-    // Validate stored procedure result
-    if (!sastResult.recordset || sastResult.recordset.length === 0) {
-      throw new Error('Stored procedure dbo.GetSASTDateTime returned no results');
-    }
+    // Convert to SAST (UTC+2)
+    const startTime = new Date(utcNow);
+    startTime.setHours(startTime.getHours() + 2);
     
-    const startTime = sastResult.recordset[0].CurrentDateTime;
-    
-    // Additional validation for startTime
-    if (!(startTime instanceof Date) || isNaN(startTime)) {
-      throw new Error('Invalid datetime returned from dbo.GetSASTDateTime');
-    }
-
     // Calculate end time in SAST
     const endTime = new Date(startTime);
     endTime.setHours(endTime.getHours() + durationHours);
@@ -4840,16 +4831,7 @@ app.post('/api/sleep', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Error putting user to sleep:', err);
-    
-    // Special handling for stored procedure errors
-    const errorMessage = err.message.includes('stored procedure') 
-      ? 'Could not retrieve server time'
-      : 'Internal server error';
-    
-    res.status(500).json({ 
-      error: errorMessage,
-      details: err.message 
-    });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
