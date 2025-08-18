@@ -4769,6 +4769,32 @@ app.get('/api/flags/counts', async (req, res) => {
   }
 });
 
+// Add this endpoint to your server.js file
+app.get('/api/community/count', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    
+    const result = await pool.request().query(`
+      SELECT COUNT(UserID) AS userCount
+      FROM Users
+    `);
+
+    const userCount = result.recordset[0].userCount;
+    
+    res.json({ 
+      success: true,
+      count: userCount
+    });
+    
+  } catch (err) {
+    console.error('Error fetching user count:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Internal server error' 
+    });
+  }
+});
+
 // put users to sleep
 app.post('/api/sleep', async (req, res) => {
   const { userId, durationHours, sleepType } = req.body;
@@ -4779,8 +4805,13 @@ app.post('/api/sleep', async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    const startTime = new Date();
-    const endTime = new Date();
+    
+    // Execute stored procedure to get SAST datetime
+    const sastResult = await pool.request().query('EXEC dbo.GetSASTDateTime');
+    const startTime = sastResult.recordset[0].CurrentDateTime; // Adjust property name if needed
+    
+    // Calculate end time in SAST
+    const endTime = new Date(startTime);
     endTime.setHours(endTime.getHours() + durationHours);
 
     await pool.request()
