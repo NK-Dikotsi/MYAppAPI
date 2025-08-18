@@ -1081,6 +1081,36 @@ app.get('/report', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 });
+app.get('/reportNoMedia', async (req, res) => {
+  const reportId = parseInt(req.query.reportId);
+
+  if (!reportId || isNaN(reportId)) {
+    return res.status(400).json({ message: 'Missing or invalid reportId.' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('ReportID', sql.Int, reportId)
+      .query(`
+        SELECT ReportID, ReporterID, emergencyType, emerDescription, sharedWith,
+               Report_Location, Report_Status, dateReported, suburbName
+        FROM [dbo].[Report]
+        WHERE ReportID = @ReportID
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ message: 'Report not found.' });
+    }
+
+    res.status(200).json({ success: true, report: result.recordset[0] });
+  } catch (err) {
+    console.error('Error fetching report (no media):', err);
+    res.status(500).json({ success: false, message: 'Internal server error.' });
+  }
+});
+
 
 //get report
 app.get('/getReportWithReporter', async (req, res) => {
@@ -4773,24 +4803,24 @@ app.get('/api/flags/counts', async (req, res) => {
 app.get('/api/community/count', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     const result = await pool.request().query(`
       SELECT COUNT(UserID) AS userCount
       FROM Users
     `);
 
     const userCount = result.recordset[0].userCount;
-    
-    res.json({ 
+
+    res.json({
       success: true,
       count: userCount
     });
-    
+
   } catch (err) {
     console.error('Error fetching user count:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: 'Internal server error' 
+      error: 'Internal server error'
     });
   }
 });
@@ -4805,14 +4835,14 @@ app.post('/api/sleep', async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    
+
     // Get current UTC time
     const utcNow = new Date();
-    
+
     // Convert to SAST (UTC+2)
     const startTime = new Date(utcNow);
     startTime.setHours(startTime.getHours() + 2);
-    
+
     // Calculate end time in SAST
     const endTime = new Date(startTime);
     endTime.setHours(endTime.getHours() + durationHours);
@@ -5669,7 +5699,7 @@ app.get('/api/analytics/type', async (req, res) => {
     const result = await pool.request().query(query);
 
     // Define required types in specific order
-    const requiredTypes = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS',  'Suspicious Activity', 'Other'];
+    const requiredTypes = ['Crime', 'Medical', 'Fire', 'Natural Disaster', 'SOS', 'Suspicious Activity', 'Other'];
     const typeCounts = {};
 
     // Initialize with zeros
