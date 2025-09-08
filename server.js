@@ -4620,7 +4620,7 @@ app.get('/report/checkOngoing', async (req, res) => {
   }
 
   try {
-    let pool = await sql.connect(dbConfig);
+    let pool = await sql.connect(config);
 
     let result = await pool.request()
       .input("userID", sql.Int, userID)
