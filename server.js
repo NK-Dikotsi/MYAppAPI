@@ -3608,6 +3608,7 @@ app.put('/api/mobile/misusereport', async (req, res) => {
 
 
 
+
 //***************************Admin FUNCTIONALITY****************************************************** */
 // register Admin
 app.post('/register-admin', async (req, res) => {
@@ -4609,6 +4610,35 @@ app.get('/api/voting-settings/has-ended', async (req, res) => {
   } catch (err) {
     console.error('Error checking session end:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+app.get('/report/checkOngoing', async (req, res) => {
+  const { userID } = req.query;
+
+  if (!userID) {
+    return res.status(400).json({ error: "Missing userID parameter" });
+  }
+
+  try {
+    let pool = await sql.connect(config);
+
+    let result = await pool.request()
+      .input("userID", sql.Int, userID)
+      .query(`
+        SELECT TOP 1 ReportID 
+        FROM Report
+        WHERE ReporterID = @userID AND Report_Status = 'On-going'
+      `);
+
+    if (result.recordset.length > 0) {
+      return res.json({ ongoing: true });
+    } else {
+      return res.json({ ongoing: false });
+    }
+
+  } catch (err) {
+    console.error("Database error:", err);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
