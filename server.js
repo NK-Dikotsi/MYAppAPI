@@ -4620,7 +4620,7 @@ app.get('/report/checkOngoing', async (req, res) => {
   }
 
   try {
-    let pool = await sql.connect(config);
+    let pool = await sql.connect(dbConfig);
 
     let result = await pool.request()
       .input("userID", sql.Int, userID)
@@ -4631,9 +4631,9 @@ app.get('/report/checkOngoing', async (req, res) => {
       `);
 
     if (result.recordset.length > 0) {
-      return res.json({ ongoing: true });
+      return res.json({ ongoing: true, reportID: result.recordset[0].ReportID });
     } else {
-      return res.json({ ongoing: false });
+      return res.json({ ongoing: false, reportID: null });
     }
 
   } catch (err) {
@@ -4641,6 +4641,7 @@ app.get('/report/checkOngoing', async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
 
 
 
