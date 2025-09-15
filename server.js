@@ -789,7 +789,7 @@ app.post('/addNotification', async (req, res) => {
           @notiTitle,
           @msg,
           @readStatus,
-          GETDATE(),
+          dbo.GetSASTDateTime(),
           @reportID,
           CAST(ul.userId AS INT),
           @NotiType
@@ -837,7 +837,7 @@ app.post('/addNotification', async (req, res) => {
                 @notiTitle,
                 @msg,
                 @readStatus,
-                GETDATE(),
+                dbo.GetSASTDateTime(),
                 @reportID,
                 @userId,
                 @NotiType
@@ -1262,7 +1262,7 @@ app.post('/acceptReport', async (req, res) => {
       .query(`
         INSERT INTO Response (UserID, res_Location, res_Status, reportID, dateAccepted)
         OUTPUT INSERTED.ResponseID
-        VALUES (@UserID, @res_Location, @res_Status, @reportID, GETDATE())
+        VALUES (@UserID, @res_Location, @res_Status, @reportID, dbo.GetSASTDateTime())
       `);
 
     const insertedID = result.recordset[0].ResponseID;
