@@ -4816,17 +4816,16 @@ app.get('/api/flags/user/:userId', async (req, res) => {
       .input('userId', sql.Int, userId)
       .query(`
         SELECT 
-        fm.FlagID as id,
-        fm.Reason as type,
-        fm.FlaggedAt as created_at,
-        fm.FlaggedStatus as status,
-        'System' as reporter_name,
-        fm.Reason as description,
-        m.MessageContent as message_content  
-      FROM FlaggedMessages fm
-      INNER JOIN Messages m ON fm.MessageID = m.MessageID
-      WHERE fm.UserID = @userId
-      ORDER BY fm.FlaggedAt DESC
+          fm.FlagID,
+          fm.Reason AS FlagType,
+          fm.FlaggedAt AS CreatedAt,
+          fm.FlaggedStatus AS Status,
+          reporter.FullName AS ReporterName,
+          fm.Reason AS Description
+        FROM FlaggedMessages fm
+        INNER JOIN Users reporter ON fm.UserID = reporter.UserID
+        WHERE fm.UserID = @userId
+        ORDER BY fm.FlaggedAt DESC
       `);
 
     res.json(result.recordset);
