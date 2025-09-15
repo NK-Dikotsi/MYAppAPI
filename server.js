@@ -1260,9 +1260,9 @@ app.post('/acceptReport', async (req, res) => {
       .input('res_Status', sql.VarChar(sql.MAX), res_Status)
       .input('reportID', sql.Int, reportID)
       .query(`
-        INSERT INTO Response (UserID, res_Location, res_Status, reportID)
+        INSERT INTO Response (UserID, res_Location, res_Status, reportID, dateAccepted)
         OUTPUT INSERTED.ResponseID
-        VALUES (@UserID, @res_Location, @res_Status, @reportID)
+        VALUES (@UserID, @res_Location, @res_Status, @reportID, GETDATE())
       `);
 
     const insertedID = result.recordset[0].ResponseID;
