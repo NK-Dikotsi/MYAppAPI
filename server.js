@@ -1139,6 +1139,7 @@ app.get('/getReportWithReporter', async (req, res) => {
           r.Report_Location,
           r.Report_Status,
           r.ReporterID,
+          r.dateReported,
 
           u.FullName,
           u.Email,
@@ -1171,6 +1172,7 @@ app.get('/getReportWithReporter', async (req, res) => {
         Report_Location: row.Report_Location,
         Report_Status: row.Report_Status,
         ReporterID: row.ReporterID,
+        dateReported : row.dateReported,
       },
       Reporter: {
         FullName: row.FullName,
@@ -4956,6 +4958,7 @@ app.get('/getReportWithReporter', async (req, res) => {
           r.Report_Location,
           r.Report_Status,
           r.ReporterID,
+          r.dateReported,
 
           u.FullName,
           u.Email,
@@ -4988,6 +4991,7 @@ app.get('/getReportWithReporter', async (req, res) => {
         Report_Location: row.Report_Location,
         Report_Status: row.Report_Status,
         ReporterID: row.ReporterID,
+        dateReported: row.dateReported,
       },
       Reporter: {
         FullName: row.FullName,
