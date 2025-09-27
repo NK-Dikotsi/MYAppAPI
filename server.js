@@ -5016,51 +5016,39 @@ app.get('/getReportWithReporter', async (req, res) => {
     });
   }
 });
-
-app.get('/api/response-times/average', async (req, res) => {
-  const userId = req.session.user.id;
-  const { emergencyType } = req.query;
-  
-  console.log('getting average response times for user:', userId, 'emergencyType:', emergencyType);
+//get response time for emergency time
+app.get('/getAverageResponseTimeByEmergencyType', async (req, res) => {
+  const { emergencyType } = req.query; // expects ?emergencyType=Fire
 
   try {
     const pool = await sql.connect(config);
 
-    let query = `
-      SELECT 
-        r.emergencyType as emergencyType,
-        AVG(DATEDIFF(MINUTE, r.dateReported, res.dateAccepted)) as averageResponseTimeMinutes,
-        COUNT(DISTINCT r.ReportID) as totalReports,
-        COUNT(DISTINCT res.ResponseID) as respondedReports
-      FROM Report r
-      LEFT JOIN Response res ON r.ReportID = res.reportID
-      WHERE res.dateAccepted IS NOT NULL
-    `;
-
-    const request = pool.request();
-
-    // Add emergency type filter if provided
-    if (emergencyType) {
-      query += ` AND r.emergencyType = @EmergencyType`;
-      request.input('EmergencyType', sql.VarChar, emergencyType);
+    if (!emergencyType) {
+      return res.status(400).json({ message: "Missing emergencyType in query." });
     }
 
-    query += ` GROUP BY r.emergencyType ORDER BY averageResponseTimeMinutes ASC`;
-
-    const result = await request.query(query);
+    const result = await pool.request()
+      .input('emergencyType', sql.VarChar, emergencyType)
+      .query(`
+        SELECT 
+          AVG(DATEDIFF(MINUTE, r.dateReported, res.dateAccepted)) as averageResponseTimeMinutes,
+          COUNT(DISTINCT r.ReportID) as totalReports,
+          COUNT(DISTINCT res.ResponseID) as respondedReports
+        FROM Report r
+        LEFT JOIN Response res ON r.ReportID = res.reportID
+        WHERE r.emergencyType = @emergencyType 
+          AND res.dateAccepted IS NOT NULL
+      `);
 
     res.status(200).json({
       success: true,
-      responseTimes: result.recordset
+      emergencyType,
+      data: result.recordset[0] // returns { averageResponseTimeMinutes, totalReports, respondedReports }
     });
 
   } catch (err) {
-    console.error('Error fetching average response times:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch response time statistics',
-      error: err.message
-    });
+    console.error("Error fetching average response time:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
