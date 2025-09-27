@@ -5017,6 +5017,53 @@ app.get('/getReportWithReporter', async (req, res) => {
   }
 });
 
+app.get('/api/response-times/average', async (req, res) => {
+  const userId = req.session.user.id;
+  const { emergencyType } = req.query;
+  
+  console.log('getting average response times for user:', userId, 'emergencyType:', emergencyType);
+
+  try {
+    const pool = await sql.connect(config);
+
+    let query = `
+      SELECT 
+        r.emergencyType as emergencyType,
+        AVG(DATEDIFF(MINUTE, r.dateReported, res.dateAccepted)) as averageResponseTimeMinutes,
+        COUNT(DISTINCT r.ReportID) as totalReports,
+        COUNT(DISTINCT res.ResponseID) as respondedReports
+      FROM Report r
+      LEFT JOIN Response res ON r.ReportID = res.reportID
+      WHERE res.dateAccepted IS NOT NULL
+    `;
+
+    const request = pool.request();
+
+    // Add emergency type filter if provided
+    if (emergencyType) {
+      query += ` AND r.emergencyType = @EmergencyType`;
+      request.input('EmergencyType', sql.VarChar, emergencyType);
+    }
+
+    query += ` GROUP BY r.emergencyType ORDER BY averageResponseTimeMinutes ASC`;
+
+    const result = await request.query(query);
+
+    res.status(200).json({
+      success: true,
+      responseTimes: result.recordset
+    });
+
+  } catch (err) {
+    console.error('Error fetching average response times:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch response time statistics',
+      error: err.message
+    });
+  }
+});
+
 //Get comunity memebers
 app.get('/getCommunityMembers', async (req, res) => {
   try {
