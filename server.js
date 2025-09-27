@@ -837,7 +837,7 @@ app.post('/addNotification', async (req, res) => {
                 @notiTitle,
                 @msg,
                 @readStatus,
-                dbo.GetSASTDateTime(),
+                dbo.GetDate(),
                 @reportID,
                 @userId,
                 @NotiType
