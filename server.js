@@ -3879,20 +3879,16 @@ app.patch('/api/user/:userId/password', async (req, res) => {
 
     const currentPassword = userResult.recordset[0].Passcode;
 
-    // Verify old password
-    const isValid = await bcrypt.compare(oldPassword, currentPassword);
-    if (!isValid) {
+    // Verify old password (direct string comparison)
+    if (oldPassword !== currentPassword) {
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
 
-    // Hash new password
-    const newHash = await bcrypt.hash(newPassword, 10);
-
-    // Update password
+    // Update password (store as plain text)
     await pool.request()
       .input('UserID', sql.Int, userId)
-      .input('NewHash', sql.VarChar, newHash)
-      .query('UPDATE Users SET Passcode = @NewHash WHERE UserID = @UserID');
+      .input('NewPassword', sql.VarChar, newPassword)
+      .query('UPDATE Users SET Passcode = @NewPassword WHERE UserID = @UserID');
 
     res.json({ success: true });
   } catch (err) {
@@ -3900,6 +3896,7 @@ app.patch('/api/user/:userId/password', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 app.patch('/api/admin/:userId/darkmode', async (req, res) => {
   const { userId } = req.params;
   const { darkMode } = req.body;
