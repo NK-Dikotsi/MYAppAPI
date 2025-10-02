@@ -3687,6 +3687,7 @@ app.post('/register-admin', async (req, res) => {
 //admin login
 app.post('/login-admin', async (req, res) => {
   const { email, password } = req.body;
+
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required.' });
   }
@@ -3698,7 +3699,7 @@ app.post('/login-admin', async (req, res) => {
       .query(`
         SELECT UserID, FullName, Email, Username, PhoneNumber, Passcode, UserType, CreatedAt, ProfilePhoto
         FROM [dbo].[Users]
-        WHERE Email = @Email AND (UserType = 'admin'  OR UserType = 'CommunityMember')
+        WHERE Email = @Email AND (UserType = 'admin' OR UserType = 'CommunityMember')
       `);
 
     if (userResult.recordset.length === 0) {
@@ -3707,65 +3708,62 @@ app.post('/login-admin', async (req, res) => {
 
     const user = userResult.recordset[0];
 
+    // Plaintext password verification
+    if (password !== user.Passcode) {
+      return res.status(401).json({ message: 'Invalid credentials.' });
+    }
+
+    // Shared user fields
+    const baseUserData = {
+      UserID: user.UserID,
+      FullName: user.FullName,
+      Email: user.Email,
+      Username: user.Username,
+      PhoneNumber: user.PhoneNumber,
+      UserType: user.UserType,
+      CreatedAt: user.CreatedAt,
+      ProfilePhoto: user.ProfilePhoto
+    };
 
     if (user.UserType === "CommunityMember") {
       const communityResult = await pool.request()
         .input('UserID', sql.Int, user.UserID)
         .query(`
-                SELECT Role, DOB, HomeAddress, TrustedContacts
-                FROM [dbo].[CommunityMember]
-                WHERE UserID = @UserID
-            `);
+          SELECT Role, DOB, HomeAddress, TrustedContacts
+          FROM [dbo].[CommunityMember]
+          WHERE UserID = @UserID
+        `);
 
-      const role = communityResult.recordset.length > 0
-        ? communityResult.recordset[0].Role
-        : 'Volunteer';
+      const communitym = communityResult.recordset[0] || {};
+      const role = communitym.Role || 'Volunteer';
 
-      const communitym = communityResult.recordset[0];
-
-      // Return properly structured response
       res.json({
         success: true,
         user: {
-          UserID: user.UserID,
-          FullName: user.FullName,
-          Email: user.Email,
-          Username: user.Username,
-          PhoneNumber: user.PhoneNumber,
-          UserType: user.UserType,
-          CreatedAt: user.CreatedAt,
-          ProfilePhoto: user.ProfilePhoto, // Fixed typo (was 'profile')
+          ...baseUserData,
           Role: role,
-          DOB: communitym.DOB,
-          HomeAddress: communitym.HomeAddress,
-          TrustedContacts: communitym.TrustedContacts,
+          DOB: communitym.DOB || null,
+          HomeAddress: communitym.HomeAddress || null,
+          TrustedContacts: communitym.TrustedContacts || null
         }
       });
     } else {
       const adminResult = await pool.request()
         .input('UserID', sql.Int, user.UserID)
         .query(`
-                SELECT DarkMode
-                FROM [dbo].[ADMIN]
-                WHERE UserID = @UserID
-            `);
+          SELECT DarkMode
+          FROM [dbo].[ADMIN]
+          WHERE UserID = @UserID
+        `);
 
       const darkMode = adminResult.recordset.length > 0
         ? adminResult.recordset[0].DarkMode
         : 'No';
 
-      // Return properly structured response
       res.json({
         success: true,
         user: {
-          UserID: user.UserID,
-          FullName: user.FullName,
-          Email: user.Email,
-          Username: user.Username,
-          PhoneNumber: user.PhoneNumber,
-          UserType: user.UserType,
-          CreatedAt: user.CreatedAt,
-          ProfilePhoto: user.ProfilePhoto, // Fixed typo (was 'profile')
+          ...baseUserData,
           DarkMode: darkMode
         }
       });
@@ -3775,6 +3773,7 @@ app.post('/login-admin', async (req, res) => {
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
+
 // Get user data
 app.get('/api/user/:userId', async (req, res) => {
   const userId = parseInt(req.params.userId); // Convert to integer
