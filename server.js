@@ -4,6 +4,8 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const { connect } = require('http2');
 
+const crypto = require('crypto');
+
 const app = express();
 //payload
 app.use(express.json({ limit: '64mb' }));
@@ -615,30 +617,145 @@ app.put('/updateUser', async (req, res) => {
 });
 
 
+const crypto = require('crypto');
+
+// In-memory storage for Agora channel mappings (use Redis in production)
+const agoraChannelMap = new Map();
+
+// Generate Agora token
+function generateAgoraToken(channelName, uid = 0) {
+  const appID = "c3110960202349228a9b5f8da61e1b45";
+  const appCertificate = "b088a0919d0c498c9bfe2e9de1bfdef7";
+  const expirationTimeInSeconds = 3600; // 1 hour
+  const currentTimestamp = Math.floor(Date.now() / 1000);
+  const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+
+  // Build token with Agora's algorithm
+  const token = RtcTokenBuilder.buildTokenWithUid(
+    appID,
+    appCertificate,
+    channelName,
+    uid,
+    Role.PUBLISHER,
+    privilegeExpiredTs
+  );
+  
+  return token;
+}
+
+// Add Agora token builder (you'll need to install agora-token)
+// npm install agora-token
+
+const { RtcTokenBuilder, RtcRole } = require('agora-token');
+
+// Generate channel for SOS report
+app.post('/api/agora/generate-channel', async (req, res) => {
+  const { reportId, emergencyType } = req.body;
+
+  try {
+    // Only generate channels for SOS reports
+    if (emergencyType !== 'SOS') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Agora channels only available for SOS reports' 
+      });
+    }
+
+    const channelName = `sos_${reportId}_${Date.now()}`;
+    const token = generateAgoraToken(channelName);
+
+    // Store mapping in memory (use Redis in production)
+    agoraChannelMap.set(reportId, {
+      channelName,
+      token,
+      createdAt: Date.now(),
+      emergencyType
+    });
+
+    // Clean up old entries (older than 24 hours)
+    const now = Date.now();
+    for (let [key, value] of agoraChannelMap.entries()) {
+      if (now - value.createdAt > 24 * 60 * 60 * 1000) {
+        agoraChannelMap.delete(key);
+      }
+    }
+
+    res.json({
+      success: true,
+      channelName,
+      token,
+      appId: "c3110960202349228a9b5f8da61e1b45"
+    });
+
+  } catch (error) {
+    console.error('Agora channel generation error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to generate Agora channel' 
+    });
+  }
+});
+
+// Get Agora channel for report
+app.get('/api/agora/channel', async (req, res) => {
+  const { reportId } = req.query;
+
+  try {
+    const channelData = agoraChannelMap.get(parseInt(reportId));
+
+    if (!channelData) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'No Agora channel found for this report' 
+      });
+    }
+
+    // Check if token is expired (1 hour)
+    if (Date.now() - channelData.createdAt > 3600 * 1000) {
+      // Generate new token for existing channel
+      const newToken = generateAgoraToken(channelData.channelName);
+      channelData.token = newToken;
+      channelData.createdAt = Date.now();
+    }
+
+    res.json({
+      success: true,
+      channelName: channelData.channelName,
+      token: channelData.token,
+      appId: "c3110960202349228a9b5f8da61e1b45",
+      emergencyType: channelData.emergencyType
+    });
+
+  } catch (error) {
+    console.error('Agora channel fetch error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch Agora channel' 
+    });
+  }
+});
+
+// Update your existing addReport endpoint to auto-generate Agora channels for SOS
 app.post('/addReport', async (req, res) => {
   const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus } = req.body;
 
-  let suburbName = "Unknown"; // Default fallback
+  let suburbName = "Unknown";
   let pool;
 
   try {
-    // First, let's get the suburb name from coordinates
+    // Your existing suburb detection code here...
     if (reportLocation) {
       try {
-        // Import node-fetch dynamically (same as updateSuburbs function)
         const { default: fetch } = await import("node-fetch");
-
         const [lat, lng] = reportLocation.split(";").map(v => v.trim());
 
-        // Validate coordinates (same validation as updateSuburbs)
         if (!lat || !lng || isNaN(parseFloat(lat)) || isNaN(parseFloat(lng))) {
           console.warn(`Invalid coordinates for new report: ${reportLocation}`);
           suburbName = "Unknown";
         } else {
           const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&zoom=18`;
-
           const response = await fetch(url, {
-            headers: { "User-Agent": "SizaCommunityWatch/1.0" } // Same user agent as updateSuburbs
+            headers: { "User-Agent": "SizaCommunityWatch/1.0" }
           });
 
           if (!response.ok) {
@@ -646,8 +763,6 @@ app.post('/addReport', async (req, res) => {
           }
 
           const data = await response.json();
-
-          // Extract suburb with same priority as updateSuburbs function
           const detectedSuburb = data.address?.suburb || data.address?.neighbourhood || null;
 
           if (detectedSuburb) {
@@ -664,7 +779,7 @@ app.post('/addReport', async (req, res) => {
       }
     }
 
-    // Now insert the report with the detected suburb
+    // Insert report (no Agora columns needed)
     pool = await sql.connect(config);
     const result = await pool.request()
       .input('ReporterID', sql.Int, reporterID)
@@ -686,23 +801,44 @@ app.post('/addReport', async (req, res) => {
 
     const insertedReportID = result.recordset[0].ReportID;
 
+    // Auto-generate Agora channel for SOS reports
+    let agoraData = null;
+    if (emergencyType === 'SOS') {
+      try {
+        const channelResponse = await fetch(`http://localhost:${process.env.PORT || 3000}/api/agora/generate-channel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reportId: insertedReportID,
+            emergencyType: 'SOS'
+          })
+        });
+        
+        if (channelResponse.ok) {
+          agoraData = await channelResponse.json();
+        }
+      } catch (agoraError) {
+        console.error('Failed to generate Agora channel:', agoraError);
+        // Don't fail the report creation if Agora fails
+      }
+    }
+
     res.status(201).json({
       message: 'Report submitted successfully.',
       reportID: insertedReportID,
-      suburbName: suburbName // Include detected suburb in response
+      suburbName: suburbName,
+      agoraChannel: agoraData || null
     });
 
   } catch (err) {
     console.error('Add report error:', err);
     res.status(500).json({ message: 'Internal server error.' });
   } finally {
-    // Ensure database connection is closed
     if (pool) {
       await pool.close();
     }
   }
 });
-
 
 
 app.post('/addTrustedContact', async (req, res) => {
