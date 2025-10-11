@@ -616,7 +616,6 @@ app.put('/updateUser', async (req, res) => {
 });
 
 
-
 const { RtcTokenBuilder, RtcRole } = require('agora-token');
 
 // In-memory storage for Agora channel mappings (use Redis in production)
@@ -643,7 +642,7 @@ function generateAgoraToken(channelName, uid = 0) {
   return token;
 }
 
-// Generate channel for SOS report
+// Generate channel for SOS report (MANUAL - if needed)
 app.post('/api/agora/generate-channel', async (req, res) => {
   const { reportId, emergencyType } = req.body;
 
@@ -659,13 +658,17 @@ app.post('/api/agora/generate-channel', async (req, res) => {
     const channelName = `sos_${reportId}_${Date.now()}`;
     const token = generateAgoraToken(channelName);
 
-    // Store mapping in memory (use Redis in production)
-    agoraChannelMap.set(reportId.toString(), {
+    // Store mapping - ALWAYS use string keys
+    const reportIdKey = String(reportId);
+    agoraChannelMap.set(reportIdKey, {
       channelName,
       token,
       createdAt: Date.now(),
       emergencyType
     });
+
+    console.log(`✓ Agora channel manually created for report ${reportId}:`, channelName);
+    console.log(`✓ Channel stored with key: "${reportIdKey}"`);
 
     // Clean up old entries (older than 24 hours)
     const now = Date.now();
@@ -696,9 +699,15 @@ app.get('/api/agora/channel', async (req, res) => {
   const { reportId } = req.query;
 
   try {
-    const channelData = agoraChannelMap.get(reportId.toString());
+    // ALWAYS use string keys for consistency
+    const reportIdKey = String(reportId);
+    const channelData = agoraChannelMap.get(reportIdKey);
+
+    console.log(`Checking Agora channel for report ${reportId} (key: "${reportIdKey}")`);
+    console.log(`Current channels in map:`, Array.from(agoraChannelMap.keys()));
 
     if (!channelData) {
+      console.log(`✗ No Agora channel found for report ${reportId}`);
       return res.status(404).json({ 
         success: false, 
         message: 'No Agora channel found for this report' 
@@ -708,10 +717,13 @@ app.get('/api/agora/channel', async (req, res) => {
     // Check if token is expired (1 hour)
     if (Date.now() - channelData.createdAt > 3600 * 1000) {
       // Generate new token for existing channel
+      console.log(`Token expired for report ${reportId}, generating new token...`);
       const newToken = generateAgoraToken(channelData.channelName);
       channelData.token = newToken;
       channelData.createdAt = Date.now();
     }
+
+    console.log(`✓ Agora channel found for report ${reportId}:`, channelData.channelName);
 
     res.json({
       success: true,
@@ -753,7 +765,10 @@ app.get('/api/report/type', async (req, res) => {
     }
 
     const report = result.recordset[0];
-    const hasAgoraChannel = agoraChannelMap.has(reportId.toString());
+    const reportIdKey = String(reportId);
+    const hasAgoraChannel = agoraChannelMap.has(reportIdKey);
+    
+    console.log(`Report ${reportId} type check: ${report.emergencyType}, Has Agora: ${hasAgoraChannel}`);
     
     res.json({
       success: true,
@@ -775,63 +790,7 @@ app.get('/api/report/type', async (req, res) => {
   }
 });
 
-// Get report details including Agora info
-app.get('/api/report/details', async (req, res) => {
-  const { reportId } = req.query;
-  let pool;
-
-  try {
-    pool = await sql.connect(config);
-    const result = await pool.request()
-      .input('ReportID', sql.Int, reportId)
-      .query(`
-        SELECT 
-          ReportID,
-          emergencyType,
-          emerDescription,
-          Report_Status,
-          dateReported,
-          suburbName
-        FROM [dbo].[Report] 
-        WHERE ReportID = @ReportID
-      `);
-
-    if (result.recordset.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Report not found' 
-      });
-    }
-
-    const report = result.recordset[0];
-    const agoraData = agoraChannelMap.get(reportId.toString());
-    
-    res.json({
-      success: true,
-      report: {
-        ...report,
-        agoraChannel: agoraData ? {
-          channelName: agoraData.channelName,
-          token: agoraData.token,
-          appId: "c3110960202349228a9b5f8da61e1b45"
-        } : null
-      }
-    });
-
-  } catch (err) {
-    console.error('Error fetching report details:', err);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error' 
-    });
-  } finally {
-    if (pool) {
-      await pool.close();
-    }
-  }
-});
-
-// ORIGINAL addReport ENDPOINT - COMPLETELY UNCHANGED
+// ORIGINAL addReport ENDPOINT - WITH IMPROVED LOGGING
 app.post('/addReport', async (req, res) => {
   const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus } = req.body;
 
@@ -842,20 +801,16 @@ app.post('/addReport', async (req, res) => {
     // First, let's get the suburb name from coordinates
     if (reportLocation) {
       try {
-        // Import node-fetch dynamically (same as updateSuburbs function)
         const { default: fetch } = await import("node-fetch");
-
         const [lat, lng] = reportLocation.split(";").map(v => v.trim());
 
-        // Validate coordinates (same validation as updateSuburbs)
         if (!lat || !lng || isNaN(parseFloat(lat)) || isNaN(parseFloat(lng))) {
           console.warn(`Invalid coordinates for new report: ${reportLocation}`);
           suburbName = "Unknown";
         } else {
           const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&zoom=18`;
-
           const response = await fetch(url, {
-            headers: { "User-Agent": "SizaCommunityWatch/1.0" } // Same user agent as updateSuburbs
+            headers: { "User-Agent": "SizaCommunityWatch/1.0" }
           });
 
           if (!response.ok) {
@@ -863,8 +818,6 @@ app.post('/addReport', async (req, res) => {
           }
 
           const data = await response.json();
-
-          // Extract suburb with same priority as updateSuburbs function
           const detectedSuburb = data.address?.suburb || data.address?.neighbourhood || null;
 
           if (detectedSuburb) {
@@ -881,7 +834,7 @@ app.post('/addReport', async (req, res) => {
       }
     }
 
-    // Now insert the report with the detected suburb
+    // Insert the report with the detected suburb
     pool = await sql.connect(config);
     const result = await pool.request()
       .input('ReporterID', sql.Int, reporterID)
@@ -902,8 +855,9 @@ app.post('/addReport', async (req, res) => {
       `);
 
     const insertedReportID = result.recordset[0].ReportID;
+    console.log(`✓ Report ${insertedReportID} created successfully`);
 
-    // AUTO-GENERATE AGORA CHANNEL FOR SOS REPORTS (NEW FUNCTIONALITY)
+    // AUTO-GENERATE AGORA CHANNEL FOR SOS REPORTS
     let agoraData = null;
     if (emergencyType === 'SOS') {
       try {
@@ -911,12 +865,14 @@ app.post('/addReport', async (req, res) => {
         const channelName = `sos_${insertedReportID}_${Date.now()}`;
         const token = generateAgoraToken(channelName);
 
-        // Store mapping in memory
-        agoraChannelMap.set(insertedReportID.toString(), {
+        // CRITICAL: Store with STRING key for consistency
+        const reportIdKey = String(insertedReportID);
+        agoraChannelMap.set(reportIdKey, {
           channelName,
           token,
           createdAt: Date.now(),
-          emergencyType: 'SOS'
+          emergencyType: 'SOS',
+          reportId: insertedReportID // Store for reference
         });
 
         agoraData = {
@@ -926,10 +882,15 @@ app.post('/addReport', async (req, res) => {
         };
 
         console.log(`✓ Agora channel created for SOS report ${insertedReportID}`);
+        console.log(`  Channel name: ${channelName}`);
+        console.log(`  Stored with key: "${reportIdKey}"`);
+        console.log(`  Current channels in map:`, Array.from(agoraChannelMap.keys()));
       } catch (agoraError) {
-        console.error('Failed to generate Agora channel:', agoraError);
+        console.error('❌ Failed to generate Agora channel:', agoraError);
         // Don't fail the report creation if Agora fails - report is still created
       }
+    } else {
+      console.log(`ℹ Report ${insertedReportID} is not SOS (type: ${emergencyType}), no Agora channel created`);
     }
 
     res.status(201).json({
@@ -965,7 +926,7 @@ function cleanupExpiredAgoraChannels() {
   }
   
   if (cleanedCount > 0) {
-    console.log(`Cleaned up ${cleanedCount} expired Agora channels`);
+    console.log(`🧹 Cleaned up ${cleanedCount} expired Agora channels`);
   }
 }
 
@@ -993,7 +954,7 @@ app.delete('/api/agora/cleanup', async (req, res) => {
   }
 });
 
-// Get Agora channel statistics (for monitoring)
+// Get Agora channel statistics (for monitoring/debugging)
 app.get('/api/agora/stats', async (req, res) => {
   try {
     const stats = {
@@ -1007,6 +968,8 @@ app.get('/api/agora/stats', async (req, res) => {
       }))
     };
     
+    console.log('📊 Agora channel stats requested:', stats);
+    
     res.json({
       success: true,
       ...stats
@@ -1018,6 +981,23 @@ app.get('/api/agora/stats', async (req, res) => {
       message: 'Failed to get stats' 
     });
   }
+});
+
+// Debug endpoint to check specific report's Agora channel
+app.get('/api/agora/debug/:reportId', async (req, res) => {
+  const { reportId } = req.params;
+  const reportIdKey = String(reportId);
+  
+  const channelData = agoraChannelMap.get(reportIdKey);
+  
+  res.json({
+    reportId: reportId,
+    reportIdKey: reportIdKey,
+    exists: !!channelData,
+    channelData: channelData || null,
+    allKeys: Array.from(agoraChannelMap.keys()),
+    mapSize: agoraChannelMap.size
+  });
 });
 
 
