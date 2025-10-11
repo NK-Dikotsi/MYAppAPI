@@ -6651,6 +6651,49 @@ app.get('/api/votes/count', async (req, res) => {
   }
 });
 
+// Check if user is in top 3 by votes
+app.get('/api/voting-settings/is-top3/:userId', async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    
+    // Get top 3 nominees with votes for current session
+    const result = await pool.request().query(`
+      SELECT TOP 3 n.NomineeID, COUNT(v.VoteID) AS VoteCount
+      FROM Nominations n
+      LEFT JOIN Votes v ON n.NominationID = v.NomineeID
+      WHERE n.SettingID = (
+        SELECT TOP 1 SettingID 
+        FROM VotingSettings 
+        ORDER BY SettingID DESC
+      )
+      GROUP BY n.NomineeID
+      HAVING COUNT(v.VoteID) > 0  -- Only include nominees with at least 1 vote
+      ORDER BY COUNT(v.VoteID) DESC
+    `);
+
+    // Extract just the user IDs from top 3
+    const top3UserIds = result.recordset.map(row => row.NomineeID);
+    
+    // Check if the requested user is in top 3
+    const isInTop3 = top3UserIds.includes(userId);
+
+    res.json({ 
+      isInTop3,
+      top3UserIds,
+      position: isInTop3 ? top3UserIds.indexOf(userId) + 1 : null
+    });
+  } catch (err) {
+    console.error('Error checking top 3 status:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 /****************SUPPORT PAGE  *********************/
 // Support Dashboard API Endpoints
 
