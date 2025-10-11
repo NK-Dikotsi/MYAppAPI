@@ -6542,7 +6542,7 @@ app.get('/api/voting-settings/has-ended', async (req, res) => {
   }
 });
 
-/// Get all nominations with vote counts for CURRENT session
+// Get all nominations with vote counts - FIXED
 app.get('/api/nominations', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -6552,10 +6552,16 @@ app.get('/api/nominations', async (req, res) => {
         COALESCE(v.VoteCount, 0) AS VoteCount
       FROM Nominations n
       LEFT JOIN (
-        SELECT NomineeID, COUNT(*) AS VoteCount
-        FROM Votes
-        GROUP BY NomineeID
-      ) v ON n.NominationID = v.NomineeID
+        SELECT n.NomineeID, COUNT(*) AS VoteCount
+        FROM Votes v
+        INNER JOIN Nominations n ON v.NomineeID = n.NominationID
+        WHERE n.SettingID = (
+          SELECT TOP 1 SettingID 
+          FROM VotingSettings 
+          ORDER BY SettingID DESC
+        )
+        GROUP BY n.NomineeID
+      ) v ON n.NomineeID = v.NomineeID
       WHERE n.SettingID = (
         SELECT TOP 1 SettingID 
         FROM VotingSettings 
@@ -6571,11 +6577,17 @@ app.get('/api/nominations', async (req, res) => {
 });
 
 /// Get all votes for CURRENT session
+// Get all votes for CURRENT session - FIXED
 app.get('/api/votes', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     const result = await pool.request().query(`
-      SELECT v.* 
+      SELECT 
+        v.VoteID,
+        v.VoterID,
+        v.NomineeID AS NominationID,  -- This is actually the NominationID
+        n.NomineeID AS NomineeUserID, -- This is the actual user who was nominated
+        v.VotedAt
       FROM Votes v
       INNER JOIN Nominations n ON v.NomineeID = n.NominationID
       WHERE n.SettingID = (
@@ -6608,21 +6620,28 @@ app.get('/api/users-minimal', async (req, res) => {
 });
 
 // Get vote counts by nominee
+// Get vote counts by nominee - FIXED
 app.get('/api/votes/count', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     const result = await pool.request().query(`
       SELECT 
-        NomineeID,
+        n.NomineeID AS NomineeUserID,  -- Count by the actual user, not nomination
         COUNT(*) AS VoteCount
-      FROM Votes
-      GROUP BY NomineeID
+      FROM Votes v
+      INNER JOIN Nominations n ON v.NomineeID = n.NominationID
+      WHERE n.SettingID = (
+        SELECT TOP 1 SettingID 
+        FROM VotingSettings 
+        ORDER BY SettingID DESC
+      )
+      GROUP BY n.NomineeID
     `);
 
     const counts = {};
     result.recordset.forEach(row => {
-      const nomineeId = parseInt(row.NomineeID, 10);
-      counts[nomineeId] = row.VoteCount;
+      const nomineeUserId = parseInt(row.NomineeUserID, 10);
+      counts[nomineeUserId] = row.VoteCount;
     });
 
     res.json(counts);
