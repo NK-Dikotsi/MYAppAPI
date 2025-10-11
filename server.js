@@ -4033,6 +4033,11 @@ app.post('/login-admin', async (req, res) => {
       const communitym = communityResult.recordset[0] || {};
       const role = communitym.Role || 'Volunteer';
 
+          // Plaintext password verification
+    if (role !== "CommunityLeader") {
+      return res.status(401).json({ message: 'Not CommunityLeader.' });
+    }
+
       res.json({
         success: true,
         user: {
