@@ -4809,123 +4809,6 @@ app.get('/isUserOnSleep', async (req, res) => {
   }
 });
 
-
-// Promote a user to Community Leader
-app.put('/api/community-members/:userId/promote', async (req, res) => {
-  const userId = parseInt(req.params.userId, 10);
-
-  if (!userId || isNaN(userId)) {
-    return res.status(400).json({ error: 'Invalid user ID' });
-  }
-
-  try {
-    const pool = await sql.connect(config);
-    const result = await pool.request()
-      .input('userId', sql.Int, userId)
-      .query(`
-        UPDATE CommunityMember
-        SET Role = 'CommunityLeader'
-        WHERE UserID = @userId
-        
-        IF @@ROWCOUNT = 0
-        BEGIN
-          -- Create a new record if one doesn't exist
-          INSERT INTO CommunityMember (UserID, Role)
-          VALUES (@userId, 'CommunityLeader')
-        END
-        
-        SELECT * FROM CommunityMember WHERE UserID = @userId
-      `);
-
-    if (result.recordset.length > 0) {
-      res.json({
-        success: true,
-        message: 'User promoted to Community Leader',
-        user: result.recordset[0]
-      });
-    } else {
-      res.status(404).json({ error: 'User not found in community members' });
-    }
-  } catch (err) {
-    console.error('Error promoting user:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Endpoint to check and disable expired voting sessions
-app.put('/api/voting-settings/check-expiry', async (req, res) => {
-  try {
-    const pool = await sql.connect(config);
-
-    // 1. Get current SAST time from database function
-    const currentTimeResult = await pool.request().query('SELECT dbo.GetSASTDateTime() AS CurrentTime');
-    const currentTime = currentTimeResult.recordset[0].CurrentTime;
-
-    // 2. Check for active sessions that have ended
-    const result = await pool.request().query(`
-      UPDATE VotingSettings
-      SET VotingEnabled = 0
-      WHERE SettingID = (
-        SELECT TOP 1 SettingID 
-        FROM VotingSettings 
-        WHERE VotingEnabled = 1 
-          AND EndDate < '${currentTime}'
-        ORDER BY SettingID DESC
-      )
-      
-      SELECT @@ROWCOUNT AS UpdatedCount
-    `);
-
-    const updatedCount = result.recordset[0].UpdatedCount;
-
-    if (updatedCount > 0) {
-      res.json({
-        success: true,
-        message: 'Disabled expired voting session',
-        updatedCount
-      });
-    } else {
-      res.json({
-        success: true,
-        message: 'No active sessions to expire',
-        updatedCount: 0
-      });
-    }
-  } catch (err) {
-    console.error('Error checking voting expiry:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Check if voting session has ended
-app.get('/api/voting-settings/has-ended', async (req, res) => {
-  try {
-    const pool = await sql.connect(config);
-
-    // Get current SAST time from database function
-    const currentTimeResult = await pool.request().query('SELECT dbo.GetSASTDateTime() AS CurrentTime');
-    const currentTime = currentTimeResult.recordset[0].CurrentTime;
-
-    // Get the latest voting settings
-    const settingsResult = await pool.request().query(`
-      SELECT TOP 1 EndDate 
-      FROM VotingSettings 
-      ORDER BY SettingID DESC
-    `);
-
-    if (settingsResult.recordset.length === 0) {
-      return res.json({ hasEnded: false });
-    }
-
-    const endDate = settingsResult.recordset[0].EndDate;
-    const hasEnded = new Date(currentTime) > new Date(endDate);
-
-    res.json({ hasEnded });
-  } catch (err) {
-    console.error('Error checking session end:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 app.get('/report/checkOngoing', async (req, res) => {
   const { userID } = req.query;
 
@@ -6273,22 +6156,42 @@ app.get('/api/analytics/messages', async (req, res) => {
 // server.js
 
 // Get current voting settings
+// Get current voting settings - FIXED to ensure we get the right active session
 app.get('/api/voting-settings', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    const result = await pool.request().query(`
+    
+    // First check if there's an active session
+    const activeResult = await pool.request().query(`
+      SELECT TOP 1 * 
+      FROM VotingSettings 
+      WHERE VotingEnabled = 1 AND EndDate > dbo.GetSASTDateTime()
+      ORDER BY SettingID DESC
+    `);
+
+    if (activeResult.recordset.length > 0) {
+      const settings = {
+        ...activeResult.recordset[0],
+        StartDate: new Date(activeResult.recordset[0].StartDate).toISOString(),
+        EndDate: new Date(activeResult.recordset[0].EndDate).toISOString(),
+        UpdatedAt: new Date(activeResult.recordset[0].UpdatedAt).toISOString()
+      };
+      return res.json(settings);
+    }
+
+    // If no active session, get the most recent one (even if ended)
+    const latestResult = await pool.request().query(`
       SELECT TOP 1 * 
       FROM VotingSettings 
       ORDER BY SettingID DESC
     `);
 
-    if (result.recordset.length > 0) {
-      // Format dates to ISO strings
+    if (latestResult.recordset.length > 0) {
       const settings = {
-        ...result.recordset[0],
-        StartDate: new Date(result.recordset[0].StartDate).toISOString(),
-        EndDate: new Date(result.recordset[0].EndDate).toISOString(),
-        UpdatedAt: new Date(result.recordset[0].UpdatedAt).toISOString()
+        ...latestResult.recordset[0],
+        StartDate: new Date(latestResult.recordset[0].StartDate).toISOString(),
+        EndDate: new Date(latestResult.recordset[0].EndDate).toISOString(),
+        UpdatedAt: new Date(latestResult.recordset[0].UpdatedAt).toISOString()
       };
       res.json(settings);
     } else {
@@ -6307,12 +6210,28 @@ app.get('/api/voting-settings', async (req, res) => {
   }
 });
 
-// Update voting settings - USING dbo.GetSASTDateTime()
-app.put('/api/voting-settings', async (req, res) => {
+// Update voting settings - IMPROVED with session validation
+app.put('/api/voting-settings/update', async (req, res) => {
   const { VotingEnabled, StartDate, EndDate, UpdatedBy } = req.body;
 
   try {
     const pool = await sql.connect(config);
+    
+    // Check if there's already an active session
+    const activeSessionCheck = await pool.request().query(`
+      SELECT TOP 1 SettingID, VotingEnabled, EndDate 
+      FROM VotingSettings 
+      WHERE VotingEnabled = 1 AND EndDate > dbo.GetSASTDateTime()
+      ORDER BY SettingID DESC
+    `);
+
+    // If trying to enable voting but there's already an active session
+    if (VotingEnabled && activeSessionCheck.recordset.length > 0) {
+      return res.status(400).json({ 
+        error: 'There is already an active voting session. Please end the current session first.' 
+      });
+    }
+
     await pool.request()
       .input('VotingEnabled', sql.Bit, VotingEnabled)
       .input('StartDate', sql.DateTime, new Date(StartDate))
@@ -6332,7 +6251,7 @@ app.put('/api/voting-settings', async (req, res) => {
               StartDate = @StartDate,
               EndDate = @EndDate,
               UpdatedBy = @UpdatedBy,
-              UpdatedAt = dbo.GetSASTDateTime()  -- CHANGED HERE
+              UpdatedAt = dbo.GetSASTDateTime()
             WHERE SettingID = @currentSettingID
         END
         ELSE
@@ -6348,7 +6267,7 @@ app.put('/api/voting-settings', async (req, res) => {
               @StartDate,
               @EndDate,
               @UpdatedBy,
-              dbo.GetSASTDateTime()  -- CHANGED HERE
+              dbo.GetSASTDateTime()
             )
         END
       `);
@@ -6360,7 +6279,270 @@ app.put('/api/voting-settings', async (req, res) => {
   }
 });
 
-// Get all nominations with vote counts
+// Start a new voting session - creates new SettingID for fresh nominations/votes
+app.post('/api/voting-settings/new-session', async (req, res) => {
+  const { StartDate, EndDate, UpdatedBy } = req.body;
+
+  try {
+    const pool = await sql.connect(config);
+    
+    // Check if there are any active sessions
+    const activeSessionCheck = await pool.request().query(`
+      SELECT TOP 1 SettingID 
+      FROM VotingSettings 
+      WHERE VotingEnabled = 1 AND EndDate > dbo.GetSASTDateTime()
+    `);
+
+    if (activeSessionCheck.recordset.length > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot start new session while there is an active voting session.' 
+      });
+    }
+
+    // Create new session
+    const result = await pool.request()
+      .input('StartDate', sql.DateTime, new Date(StartDate))
+      .input('EndDate', sql.DateTime, new Date(EndDate))
+      .input('UpdatedBy', sql.Int, UpdatedBy)
+      .query(`
+        INSERT INTO VotingSettings (
+          VotingEnabled, 
+          StartDate, 
+          EndDate, 
+          UpdatedBy,
+          UpdatedAt
+        ) VALUES (
+          1, -- Enable voting for new session
+          @StartDate,
+          @EndDate,
+          @UpdatedBy,
+          dbo.GetSASTDateTime()
+        )
+        
+        SELECT SCOPE_IDENTITY() AS NewSettingID;
+      `);
+
+    const newSettingID = result.recordset[0].NewSettingID;
+    
+    res.json({ 
+      success: true, 
+      message: 'New voting session started successfully',
+      newSettingID 
+    });
+  } catch (err) {
+    console.error('Error starting new voting session:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Promote a user to Community Leader
+app.put('/api/community-members/:userId/promote', async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+
+  if (!userId || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid user ID' });
+  }
+
+  try {
+    const pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('userId', sql.Int, userId)
+      .query(`
+        UPDATE CommunityMember
+        SET Role = 'CommunityLeader'
+        WHERE UserID = @userId
+        
+        IF @@ROWCOUNT = 0
+        BEGIN
+          -- Create a new record if one doesn't exist
+          INSERT INTO CommunityMember (UserID, Role)
+          VALUES (@userId, 'CommunityLeader')
+        END
+        
+        SELECT * FROM CommunityMember WHERE UserID = @userId
+      `);
+
+    if (result.recordset.length > 0) {
+      res.json({
+        success: true,
+        message: 'User promoted to Community Leader',
+        user: result.recordset[0]
+      });
+    } else {
+      res.status(404).json({ error: 'User not found in community members' });
+    }
+  } catch (err) {
+    console.error('Error promoting user:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Promote top 3 nominees as Community Leaders - WITH VOTE REQUIREMENT
+app.post('/api/voting-settings/promote-top3', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+    
+    // Get top 3 nominees by votes for the latest session
+    const topNominees = await pool.request().query(`
+      SELECT TOP 3 n.NomineeID, COUNT(v.VoteID) AS VoteCount
+      FROM Nominations n
+      LEFT JOIN Votes v ON n.NominationID = v.NomineeID
+      WHERE n.SettingID = (SELECT TOP 1 SettingID FROM VotingSettings ORDER BY SettingID DESC)
+      GROUP BY n.NomineeID
+      HAVING COUNT(v.VoteID) > 0  -- Only include nominees with at least 1 vote
+      ORDER BY COUNT(v.VoteID) DESC
+    `);
+
+    if (topNominees.recordset.length === 0) {
+      return res.status(400).json({ 
+        error: 'No eligible nominees found to promote. At least one nominee must have votes.' 
+      });
+    }
+
+    // Ensure we have at least the top nominee (required), others are optional
+    const requiredNominees = topNominees.recordset.slice(0, 1); // Top 1 is required
+    const optionalNominees = topNominees.recordset.slice(1, 3); // Next 2 are optional
+
+    const promotionResults = [];
+    
+    // Promote required top nominee (must have votes)
+    for (const nominee of requiredNominees) {
+      const result = await pool.request()
+        .input('userId', sql.Int, nominee.NomineeID)
+        .query(`
+          UPDATE CommunityMember
+          SET Role = 'CommunityLeader'
+          WHERE UserID = @userId
+          
+          IF @@ROWCOUNT = 0
+          BEGIN
+            INSERT INTO CommunityMember (UserID, Role)
+            VALUES (@userId, 'CommunityLeader')
+          END
+        `);
+
+      promotionResults.push({
+        nomineeId: nominee.NomineeID,
+        voteCount: nominee.VoteCount,
+        position: 1,
+        promoted: true
+      });
+    }
+
+    // Promote optional nominees (if they exist and have votes)
+    for (const nominee of optionalNominees) {
+      const result = await pool.request()
+        .input('userId', sql.Int, nominee.NomineeID)
+        .query(`
+          UPDATE CommunityMember
+          SET Role = 'CommunityLeader'
+          WHERE UserID = @userId
+          
+          IF @@ROWCOUNT = 0
+          BEGIN
+            INSERT INTO CommunityMember (UserID, Role)
+            VALUES (@userId, 'CommunityLeader')
+          END
+        `);
+
+      promotionResults.push({
+        nomineeId: nominee.NomineeID,
+        voteCount: nominee.VoteCount,
+        position: promotionResults.length + 1,
+        promoted: true
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Successfully promoted ${promotionResults.length} user(s) to Community Leaders`,
+      results: promotionResults,
+      note: promotionResults.length === 1 
+        ? 'Only the top nominee was promoted (minimum requirement met)'
+        : `Top ${promotionResults.length} nominees promoted`
+    });
+  } catch (err) {
+    console.error('Error promoting top 3:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Endpoint to check and disable expired voting sessions
+app.put('/api/voting-settings/check-expiry', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+
+    // 1. Get current SAST time from database function
+    const currentTimeResult = await pool.request().query('SELECT dbo.GetSASTDateTime() AS CurrentTime');
+    const currentTime = currentTimeResult.recordset[0].CurrentTime;
+
+    // 2. Check for active sessions that have ended
+    const result = await pool.request().query(`
+      UPDATE VotingSettings
+      SET VotingEnabled = 0
+      WHERE SettingID = (
+        SELECT TOP 1 SettingID 
+        FROM VotingSettings 
+        WHERE VotingEnabled = 1 
+          AND EndDate < '${currentTime}'
+        ORDER BY SettingID DESC
+      )
+      
+      SELECT @@ROWCOUNT AS UpdatedCount
+    `);
+
+    const updatedCount = result.recordset[0].UpdatedCount;
+
+    if (updatedCount > 0) {
+      res.json({
+        success: true,
+        message: 'Disabled expired voting session',
+        updatedCount
+      });
+    } else {
+      res.json({
+        success: true,
+        message: 'No active sessions to expire',
+        updatedCount: 0
+      });
+    }
+  } catch (err) {
+    console.error('Error checking voting expiry:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Check if voting session has ended
+app.get('/api/voting-settings/has-ended', async (req, res) => {
+  try {
+    const pool = await sql.connect(config);
+
+    // Get current SAST time from database function
+    const currentTimeResult = await pool.request().query('SELECT dbo.GetSASTDateTime() AS CurrentTime');
+    const currentTime = currentTimeResult.recordset[0].CurrentTime;
+
+    // Get the latest voting settings
+    const settingsResult = await pool.request().query(`
+      SELECT TOP 1 EndDate 
+      FROM VotingSettings 
+      ORDER BY SettingID DESC
+    `);
+
+    if (settingsResult.recordset.length === 0) {
+      return res.json({ hasEnded: false });
+    }
+
+    const endDate = settingsResult.recordset[0].EndDate;
+    const hasEnded = new Date(currentTime) > new Date(endDate);
+
+    res.json({ hasEnded });
+  } catch (err) {
+    console.error('Error checking session end:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/// Get all nominations with vote counts for CURRENT session
 app.get('/api/nominations', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -6374,6 +6556,11 @@ app.get('/api/nominations', async (req, res) => {
         FROM Votes
         GROUP BY NomineeID
       ) v ON n.NominationID = v.NomineeID
+      WHERE n.SettingID = (
+        SELECT TOP 1 SettingID 
+        FROM VotingSettings 
+        ORDER BY SettingID DESC
+      )
       ORDER BY n.NominatedAt DESC
     `);
     res.json(result.recordset);
@@ -6383,14 +6570,20 @@ app.get('/api/nominations', async (req, res) => {
   }
 });
 
-// Get all votes
+/// Get all votes for CURRENT session
 app.get('/api/votes', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     const result = await pool.request().query(`
-      SELECT * 
-      FROM Votes 
-      ORDER BY VotedAt DESC
+      SELECT v.* 
+      FROM Votes v
+      INNER JOIN Nominations n ON v.NomineeID = n.NominationID
+      WHERE n.SettingID = (
+        SELECT TOP 1 SettingID 
+        FROM VotingSettings 
+        ORDER BY SettingID DESC
+      )
+      ORDER BY v.VotedAt DESC
     `);
     res.json(result.recordset);
   } catch (err) {
