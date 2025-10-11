@@ -6157,43 +6157,49 @@ app.get('/api/analytics/messages', async (req, res) => {
 
 // Get current voting settings
 // Get current voting settings - FIXED to ensure we get the right active session
+// Get current voting settings - FIXED date handling
 app.get('/api/voting-settings', async (req, res) => {
   try {
     const pool = await sql.connect(config);
     
     // First check if there's an active session
-    const activeResult = await pool.request().query(`
-      SELECT TOP 1 * 
-      FROM VotingSettings 
-      WHERE VotingEnabled = 1 AND EndDate > dbo.GetSASTDateTime()
-      ORDER BY SettingID DESC
-    `);
+    const activeResult = await pool.request()
+      .query(`
+        SELECT TOP 1 * 
+        FROM VotingSettings 
+        WHERE VotingEnabled = 1 AND EndDate > dbo.GetSASTDateTime()
+        ORDER BY SettingID DESC
+      `);
 
     if (activeResult.recordset.length > 0) {
-      const settings = {
-        ...activeResult.recordset[0],
-        StartDate: new Date(activeResult.recordset[0].StartDate).toISOString(),
-        EndDate: new Date(activeResult.recordset[0].EndDate).toISOString(),
-        UpdatedAt: new Date(activeResult.recordset[0].UpdatedAt).toISOString()
+      const settings = activeResult.recordset[0];
+      // Convert dates to ISO strings safely
+      const formattedSettings = {
+        ...settings,
+        StartDate: settings.StartDate ? new Date(settings.StartDate).toISOString() : null,
+        EndDate: settings.EndDate ? new Date(settings.EndDate).toISOString() : null,
+        UpdatedAt: settings.UpdatedAt ? new Date(settings.UpdatedAt).toISOString() : null
       };
-      return res.json(settings);
+      return res.json(formattedSettings);
     }
 
-    // If no active session, get the most recent one (even if ended)
-    const latestResult = await pool.request().query(`
-      SELECT TOP 1 * 
-      FROM VotingSettings 
-      ORDER BY SettingID DESC
-    `);
+    // If no active session, get the most recent one
+    const latestResult = await pool.request()
+      .query(`
+        SELECT TOP 1 * 
+        FROM VotingSettings 
+        ORDER BY SettingID DESC
+      `);
 
     if (latestResult.recordset.length > 0) {
-      const settings = {
-        ...latestResult.recordset[0],
-        StartDate: new Date(latestResult.recordset[0].StartDate).toISOString(),
-        EndDate: new Date(latestResult.recordset[0].EndDate).toISOString(),
-        UpdatedAt: new Date(latestResult.recordset[0].UpdatedAt).toISOString()
+      const settings = latestResult.recordset[0];
+      const formattedSettings = {
+        ...settings,
+        StartDate: settings.StartDate ? new Date(settings.StartDate).toISOString() : null,
+        EndDate: settings.EndDate ? new Date(settings.EndDate).toISOString() : null,
+        UpdatedAt: settings.UpdatedAt ? new Date(settings.UpdatedAt).toISOString() : null
       };
-      res.json(settings);
+      res.json(formattedSettings);
     } else {
       // Return default settings if none exist
       const defaultSettings = {
@@ -6211,6 +6217,7 @@ app.get('/api/voting-settings', async (req, res) => {
 });
 
 // Update voting settings - IMPROVED with session validation
+// Update voting settings - FIXED date handling
 app.put('/api/voting-settings/update', async (req, res) => {
   const { VotingEnabled, StartDate, EndDate, UpdatedBy } = req.body;
 
@@ -6232,10 +6239,14 @@ app.put('/api/voting-settings/update', async (req, res) => {
       });
     }
 
+    // Convert dates to proper format
+    const startDateObj = new Date(StartDate);
+    const endDateObj = new Date(EndDate);
+
     await pool.request()
       .input('VotingEnabled', sql.Bit, VotingEnabled)
-      .input('StartDate', sql.DateTime, new Date(StartDate))
-      .input('EndDate', sql.DateTime, new Date(EndDate))
+      .input('StartDate', sql.DateTime, startDateObj)
+      .input('EndDate', sql.DateTime, endDateObj)
       .input('UpdatedBy', sql.Int, UpdatedBy)
       .query(`
         -- Check if a setting exists
@@ -6280,6 +6291,7 @@ app.put('/api/voting-settings/update', async (req, res) => {
 });
 
 // Start a new voting session - creates new SettingID for fresh nominations/votes
+// Start a new voting session - FIXED date handling
 app.post('/api/voting-settings/new-session', async (req, res) => {
   const { StartDate, EndDate, UpdatedBy } = req.body;
 
@@ -6299,10 +6311,14 @@ app.post('/api/voting-settings/new-session', async (req, res) => {
       });
     }
 
+    // Convert dates to proper format
+    const startDateObj = new Date(StartDate);
+    const endDateObj = new Date(EndDate);
+
     // Create new session
     const result = await pool.request()
-      .input('StartDate', sql.DateTime, new Date(StartDate))
-      .input('EndDate', sql.DateTime, new Date(EndDate))
+      .input('StartDate', sql.DateTime, startDateObj)
+      .input('EndDate', sql.DateTime, endDateObj)
       .input('UpdatedBy', sql.Int, UpdatedBy)
       .query(`
         INSERT INTO VotingSettings (
@@ -6467,7 +6483,7 @@ app.post('/api/voting-settings/promote-top3', async (req, res) => {
   }
 });
 
-// Endpoint to check and disable expired voting sessions
+// Endpoint to check and disable expired voting sessions - FIXED
 app.put('/api/voting-settings/check-expiry', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -6476,20 +6492,22 @@ app.put('/api/voting-settings/check-expiry', async (req, res) => {
     const currentTimeResult = await pool.request().query('SELECT dbo.GetSASTDateTime() AS CurrentTime');
     const currentTime = currentTimeResult.recordset[0].CurrentTime;
 
-    // 2. Check for active sessions that have ended
-    const result = await pool.request().query(`
-      UPDATE VotingSettings
-      SET VotingEnabled = 0
-      WHERE SettingID = (
-        SELECT TOP 1 SettingID 
-        FROM VotingSettings 
-        WHERE VotingEnabled = 1 
-          AND EndDate < '${currentTime}'
-        ORDER BY SettingID DESC
-      )
-      
-      SELECT @@ROWCOUNT AS UpdatedCount
-    `);
+    // 2. Check for active sessions that have ended - USING PARAMETERIZED QUERY
+    const result = await pool.request()
+      .input('currentTime', sql.DateTime, currentTime)
+      .query(`
+        UPDATE VotingSettings
+        SET VotingEnabled = 0
+        WHERE SettingID = (
+          SELECT TOP 1 SettingID 
+          FROM VotingSettings 
+          WHERE VotingEnabled = 1 
+            AND EndDate < @currentTime
+          ORDER BY SettingID DESC
+        )
+        
+        SELECT @@ROWCOUNT AS UpdatedCount
+      `);
 
     const updatedCount = result.recordset[0].UpdatedCount;
 
@@ -6512,7 +6530,7 @@ app.put('/api/voting-settings/check-expiry', async (req, res) => {
   }
 });
 
-// Check if voting session has ended
+// Check if voting session has ended - FIXED
 app.get('/api/voting-settings/has-ended', async (req, res) => {
   try {
     const pool = await sql.connect(config);
@@ -6533,7 +6551,9 @@ app.get('/api/voting-settings/has-ended', async (req, res) => {
     }
 
     const endDate = settingsResult.recordset[0].EndDate;
-    const hasEnded = new Date(currentTime) > new Date(endDate);
+    
+    // Compare dates directly from database (no string conversion issues)
+    const hasEnded = currentTime > endDate;
 
     res.json({ hasEnded });
   } catch (err) {
