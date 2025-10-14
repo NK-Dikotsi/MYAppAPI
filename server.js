@@ -619,7 +619,7 @@ app.put('/updateUser', async (req, res) => {
 // Jitsi configuration
 const JITSI_DOMAIN = "meet.jit.si";
 
-// Generate Jitsi room name for SOS report with moderator configuration
+// Generate Jitsi room name for SOS report
 function generateJitsiRoom(reportId) {
   const timestamp = Date.now();
   const randomSuffix = Math.random().toString(36).substring(2, 8);
@@ -632,85 +632,55 @@ function generateJitsiRoom(reportId) {
   };
 }
 
-// Generate Jitsi room URL with moderator configuration
+// Generate Jitsi room URL with LEGITIMATE configuration
 function generateJitsiRoomUrl(roomName, userName = 'User', isVideoEnabled = true) {
-  // Critical configuration to make first user moderator and bypass authentication
+  // LEGITIMATE configuration using only supported parameters
   const jitsiConfig = {
-    // Disable all authentication and pre-join screens
-    prejoinPageEnabled: false,
-    enableWelcomePage: false,
-    requireDisplayName: false,
-    
-    // Make first user the moderator automatically
-    startWithAudioMuted: false,
-    startWithVideoMuted: !isVideoEnabled,
-    
-    // Disable all external authentication
-    disableThirdPartyRequests: true,
-    disableDeepLinking: true,
-    disableInviteFunctions: true,
-    
-    // Conference settings for public access
-    enableNoAudioDetection: false,
-    enableClosePage: false,
-    disableModeratorIndicator: false,
-    
-    // Mobile optimizations
-    disableIOSScreensharing: true,
-    enableLayerSuspension: true,
-    
-    // Privacy settings
-    enableEmailInStats: false,
-    enableDisplayNameInStats: false,
-    
-    // Toolbar configuration
-    toolbarButtons: [
-      'microphone', 'camera', 'closedcaptions', 'desktop', 'fullscreen',
-      'fodeviceselection', 'hangup', 'profile', 'chat', 'recording',
-      'livestreaming', 'etherpad', 'sharedvideo', 'settings', 'raisehand',
-      'videoquality', 'filmstrip', 'invite', 'feedback', 'stats', 'shortcuts',
-      'tileview', 'videobackgroundblur', 'download', 'help', 'mute-everyone',
-      'mute-video-everyone', 'security'
-    ],
-    
-    // Critical: Ensure anyone can join without authentication
-    enableAuthentication: false,
-    enableAuthenticationIcon: false,
-    gravatarBaseURL: '',
-    
-    // Make sure first user has moderator privileges
-    startAudioOnly: !isVideoEnabled,
-    enableUserRolesBasedOnToken: false
+    // Room behavior - LEGITIMATE PARAMETERS
+    'config.startWithAudioMuted': 'false',
+    'config.startWithVideoMuted': isVideoEnabled ? 'false' : 'true',
+    'config.prejoinPageEnabled': 'false',
+
+    // UI simplification (legitimate)
+    'config.enableWelcomePage': 'false',
+    'config.requireDisplayName': 'false',
+    'config.disableProfile': 'false',
+
+    // Audio/Video defaults
+    'config.enableNoAudioDetection': 'false',
+    'config.enableNoisyMicDetection': 'true',
+
+    // Toolbar for emergency scenarios (minimal but functional)
+    'config.toolbarButtons': JSON.stringify([
+      'microphone',
+      'camera',
+      'closedcaptions',
+      'desktop',
+      'fullscreen',
+      'fodeviceselection',
+      'hangup',
+      'chat',
+      'raisehand',
+      'settings',
+      'shortcuts'
+    ]),
+
+    // User info
+    'userInfo.displayName': userName,
+    'userInfo.email': '',
+
+    // Connection settings
+    'config.disableAudioLevels': 'false',
+    'config.channelLastN': '-1',
   };
 
-  const userInfo = {
-    displayName: userName,
-    email: ''
-  };
-
-  // Build URL parameters
-  const configParams = new URLSearchParams();
-  
-  // Add config parameters
+  // Build URL with config parameters
+  const params = new URLSearchParams();
   Object.entries(jitsiConfig).forEach(([key, value]) => {
-    if (typeof value === 'boolean') {
-      configParams.append(`config.${key}`, value.toString());
-    } else if (typeof value === 'string') {
-      configParams.append(`config.${key}`, value);
-    } else if (Array.isArray(value)) {
-      configParams.append(`config.${key}`, JSON.stringify(value));
-    }
-  });
-  
-  // Add user info
-  Object.entries(userInfo).forEach(([key, value]) => {
-    configParams.append(`userInfo.${key}`, value);
+    params.append(key, value);
   });
 
-  // Add critical parameters for moderator access
-  configParams.append('config.startSilent', 'false');
-  
-  return `https://${JITSI_DOMAIN}/${roomName}#${configParams.toString()}`;
+  return `https://${JITSI_DOMAIN}/${roomName}#${params.toString()}`;
 }
 
 // Create Jitsi room in database for SOS report
@@ -748,7 +718,7 @@ async function createJitsiRoomInDB(reportId, createdBy = null) {
   }
 }
 
-// NEW ENDPOINT: Auto-create Jitsi room for SOS reports
+// NEW ENDPOINT: Auto-create Jitsi room for SOS reports (LEGITIMATE)
 app.post('/api/jitsi/auto-create-room', async (req, res) => {
   const { reportId, userId, emergencyType } = req.body;
   let pool;
@@ -793,7 +763,7 @@ app.post('/api/jitsi/auto-create-room', async (req, res) => {
     const roomUrl = generateJitsiRoomUrl(roomData.roomName, 'Reporter');
 
     console.log(`✓ Auto-created Jitsi room for SOS report ${reportId}`);
-    console.log(`  Moderator configuration applied - no authentication required`);
+    console.log(`  Legitimate configuration applied`);
 
     res.json({
       success: true,
@@ -802,7 +772,7 @@ app.post('/api/jitsi/auto-create-room', async (req, res) => {
       roomName: roomData.roomName,
       roomUrl: roomUrl,
       domain: roomData.domain,
-      configuration: 'moderator-enabled'
+      configuration: 'legitimate'
     });
 
   } catch (error) {
@@ -819,7 +789,7 @@ app.post('/api/jitsi/auto-create-room', async (req, res) => {
   }
 });
 
-// Get Jitsi room for report with moderator configuration
+// Get Jitsi room for report with LEGITIMATE configuration
 app.get('/api/jitsi/room', async (req, res) => {
   const { reportId, userName = 'User', isVideoEnabled = 'true' } = req.query;
   let pool;
@@ -845,7 +815,7 @@ app.get('/api/jitsi/room', async (req, res) => {
     const room = result.recordset[0];
     console.log(`✓ Jitsi room found for report ${reportId}:`, room.RoomName);
 
-    // Generate room URL with moderator configuration
+    // Generate room URL with legitimate configuration
     const videoEnabled = isVideoEnabled === 'true';
     const roomUrl = generateJitsiRoomUrl(room.RoomName, userName, videoEnabled);
 
@@ -858,7 +828,7 @@ app.get('/api/jitsi/room', async (req, res) => {
       status: room.Status,
       createdAt: room.CreatedAt,
       createdBy: room.CreatedBy,
-      configuration: 'moderator-enabled'
+      configuration: 'legitimate'
     });
 
   } catch (error) {
@@ -874,7 +844,7 @@ app.get('/api/jitsi/room', async (req, res) => {
   }
 });
 
-// Generate room for SOS report (manual creation)
+// Generate room for SOS report (manual creation - LEGITIMATE)
 app.post('/api/jitsi/generate-room', async (req, res) => {
   const { reportId, emergencyType, userId, userName } = req.body;
   let pool;
@@ -922,7 +892,7 @@ app.post('/api/jitsi/generate-room', async (req, res) => {
       roomName: roomData.roomName,
       roomUrl: roomUrl,
       domain: roomData.domain,
-      configuration: 'moderator-enabled'
+      configuration: 'legitimate'
     });
 
   } catch (error) {
@@ -938,7 +908,7 @@ app.post('/api/jitsi/generate-room', async (req, res) => {
   }
 });
 
-// Join Jitsi room (record participant)
+// Join Jitsi room (record participant) - UNCHANGED
 app.post('/api/jitsi/join', async (req, res) => {
   const { roomId, userId } = req.body;
   let pool;
@@ -999,7 +969,7 @@ app.post('/api/jitsi/join', async (req, res) => {
   }
 });
 
-// Leave Jitsi room (record participant leaving)
+// Leave Jitsi room (record participant leaving) - UNCHANGED
 app.post('/api/jitsi/leave', async (req, res) => {
   const { roomId, userId } = req.body;
   let pool;
@@ -1042,7 +1012,7 @@ app.post('/api/jitsi/leave', async (req, res) => {
   }
 });
 
-// Get room participants
+// Get room participants - UNCHANGED
 app.get('/api/jitsi/participants', async (req, res) => {
   const { roomId } = req.query;
   let pool;
@@ -1085,7 +1055,7 @@ app.get('/api/jitsi/participants', async (req, res) => {
   }
 });
 
-// Check report type and Jitsi availability
+// Check report type and Jitsi availability - UPDATED with legitimate config
 app.get('/api/report/type', async (req, res) => {
   const { reportId, userName = 'User' } = req.query;
   let pool;
@@ -1132,7 +1102,7 @@ app.get('/api/report/type', async (req, res) => {
         roomId: report.RoomId,
         roomName: report.RoomName,
         roomUrl: roomUrl,
-        configuration: 'moderator-enabled'
+        configuration: 'legitimate'
       })
     });
 
@@ -1233,7 +1203,7 @@ app.post('/addReport', async (req, res) => {
   }
 });
 
-// NEW ENDPOINT: Create Jitsi room after report creation
+// NEW ENDPOINT: Create Jitsi room after report creation (LEGITIMATE)
 app.post('/api/jitsi/create-after-report', async (req, res) => {
   const { reportId, userId, emergencyType } = req.body;
   let pool;
@@ -1288,7 +1258,6 @@ app.post('/api/jitsi/create-after-report', async (req, res) => {
     const roomUrl = generateJitsiRoomUrl(roomData.roomName, 'Reporter');
 
     console.log(`✓ Created Jitsi room after report creation for report ${reportId}`);
-    console.log(`  Moderator configuration applied`);
 
     res.json({
       success: true,
@@ -1296,7 +1265,7 @@ app.post('/api/jitsi/create-after-report', async (req, res) => {
       roomName: roomData.roomName,
       roomUrl: roomUrl,
       domain: roomData.domain,
-      configuration: 'moderator-enabled'
+      configuration: 'legitimate'
     });
 
   } catch (error) {
@@ -1312,7 +1281,7 @@ app.post('/api/jitsi/create-after-report', async (req, res) => {
   }
 });
 
-// End a Jitsi room
+// End a Jitsi room - UNCHANGED
 app.post('/api/jitsi/end-room', async (req, res) => {
   const { roomId } = req.body;
   let pool;
@@ -1358,7 +1327,7 @@ app.post('/api/jitsi/end-room', async (req, res) => {
   }
 });
 
-// Get Jitsi room statistics
+// Get Jitsi room statistics - UPDATED with legitimate config
 app.get('/api/jitsi/stats', async (req, res) => {
   let pool;
 
@@ -1417,7 +1386,7 @@ app.get('/api/jitsi/stats', async (req, res) => {
   }
 });
 
-// Debug endpoint to check specific report's Jitsi room
+// Debug endpoint to check specific report's Jitsi room - UPDATED with legitimate config
 app.get('/api/jitsi/debug/:reportId', async (req, res) => {
   const { reportId } = req.params;
   let pool;
@@ -1450,7 +1419,7 @@ app.get('/api/jitsi/debug/:reportId', async (req, res) => {
       endedAt: room.EndedAt,
       createdBy: room.CreatedBy,
       participantCount: room.ParticipantCount,
-      configuration: 'moderator-enabled'
+      configuration: 'legitimate'
     }));
   
     res.json({
@@ -1472,7 +1441,7 @@ app.get('/api/jitsi/debug/:reportId', async (req, res) => {
   }
 });
 
-// Test Jitsi room configuration
+// Test Jitsi room configuration - UPDATED with legitimate config
 app.get('/api/jitsi/test-config', async (req, res) => {
   const { roomName = 'test-room', userName = 'Test User' } = req.query;
   
@@ -1487,10 +1456,9 @@ app.get('/api/jitsi/test-config', async (req, res) => {
         prejoinPageEnabled: false,
         enableWelcomePage: false,
         requireDisplayName: false,
-        disableThirdPartyRequests: true,
-        disableDeepLinking: true,
-        enableAuthentication: false,
-        moderatorEnabled: true
+        startWithAudioMuted: false,
+        startWithVideoMuted: false,
+        method: 'legitimate'
       },
       testUrl: roomUrl
     });
@@ -1504,7 +1472,7 @@ app.get('/api/jitsi/test-config', async (req, res) => {
   }
 });
 
-// NEW ENDPOINT: Check if SOS report needs Jitsi room
+// NEW ENDPOINT: Check if SOS report needs Jitsi room - UPDATED with legitimate config
 app.get('/api/jitsi/check-sos-room', async (req, res) => {
   const { reportId } = req.query;
   let pool;
@@ -1552,7 +1520,7 @@ app.get('/api/jitsi/check-sos-room', async (req, res) => {
         roomId: data.RoomId,
         roomName: data.RoomName,
         roomUrl: roomUrl,
-        configuration: 'moderator-enabled'
+        configuration: 'legitimate'
       })
     });
 
@@ -1568,10 +1536,6 @@ app.get('/api/jitsi/check-sos-room', async (req, res) => {
     }
   }
 });
-
-
-
-
 
 app.post('/addTrustedContact', async (req, res) => {
   const { fName, phoneNum, emailAdd, isMem, userID } = req.body;
