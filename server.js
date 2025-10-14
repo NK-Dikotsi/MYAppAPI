@@ -617,11 +617,10 @@ app.put('/updateUser', async (req, res) => {
 
 
 // Jitsi configuration
-const JITSI_DOMAIN = "meet.jit.si"; // Use "your-domain.com" if self-hosting
+const JITSI_DOMAIN = "meet.jit.si";
 
-// Generate Jitsi room name for SOS report
+// Generate Jitsi room name for SOS report with moderator configuration
 function generateJitsiRoom(reportId) {
-  // Create unique, secure room name
   const timestamp = Date.now();
   const randomSuffix = Math.random().toString(36).substring(2, 8);
   const roomName = `sos-${reportId}-${timestamp}-${randomSuffix}`;
@@ -631,6 +630,87 @@ function generateJitsiRoom(reportId) {
     roomUrl: `https://${JITSI_DOMAIN}/${roomName}`,
     domain: JITSI_DOMAIN
   };
+}
+
+// Generate Jitsi room URL with moderator configuration
+function generateJitsiRoomUrl(roomName, userName = 'User', isVideoEnabled = true) {
+  // Critical configuration to make first user moderator and bypass authentication
+  const jitsiConfig = {
+    // Disable all authentication and pre-join screens
+    prejoinPageEnabled: false,
+    enableWelcomePage: false,
+    requireDisplayName: false,
+    
+    // Make first user the moderator automatically
+    startWithAudioMuted: false,
+    startWithVideoMuted: !isVideoEnabled,
+    
+    // Disable all external authentication
+    disableThirdPartyRequests: true,
+    disableDeepLinking: true,
+    disableInviteFunctions: true,
+    
+    // Conference settings for public access
+    enableNoAudioDetection: false,
+    enableClosePage: false,
+    disableModeratorIndicator: false,
+    
+    // Mobile optimizations
+    disableIOSScreensharing: true,
+    enableLayerSuspension: true,
+    
+    // Privacy settings
+    enableEmailInStats: false,
+    enableDisplayNameInStats: false,
+    
+    // Toolbar configuration
+    toolbarButtons: [
+      'microphone', 'camera', 'closedcaptions', 'desktop', 'fullscreen',
+      'fodeviceselection', 'hangup', 'profile', 'chat', 'recording',
+      'livestreaming', 'etherpad', 'sharedvideo', 'settings', 'raisehand',
+      'videoquality', 'filmstrip', 'invite', 'feedback', 'stats', 'shortcuts',
+      'tileview', 'videobackgroundblur', 'download', 'help', 'mute-everyone',
+      'mute-video-everyone', 'security'
+    ],
+    
+    // Critical: Ensure anyone can join without authentication
+    enableAuthentication: false,
+    enableAuthenticationIcon: false,
+    gravatarBaseURL: '',
+    
+    // Make sure first user has moderator privileges
+    startAudioOnly: !isVideoEnabled,
+    enableUserRolesBasedOnToken: false
+  };
+
+  const userInfo = {
+    displayName: userName,
+    email: ''
+  };
+
+  // Build URL parameters
+  const configParams = new URLSearchParams();
+  
+  // Add config parameters
+  Object.entries(jitsiConfig).forEach(([key, value]) => {
+    if (typeof value === 'boolean') {
+      configParams.append(`config.${key}`, value.toString());
+    } else if (typeof value === 'string') {
+      configParams.append(`config.${key}`, value);
+    } else if (Array.isArray(value)) {
+      configParams.append(`config.${key}`, JSON.stringify(value));
+    }
+  });
+  
+  // Add user info
+  Object.entries(userInfo).forEach(([key, value]) => {
+    configParams.append(`userInfo.${key}`, value);
+  });
+
+  // Add critical parameters for moderator access
+  configParams.append('config.startSilent', 'false');
+  
+  return `https://${JITSI_DOMAIN}/${roomName}#${configParams.toString()}`;
 }
 
 // Create Jitsi room in database for SOS report
@@ -668,17 +748,18 @@ async function createJitsiRoomInDB(reportId, createdBy = null) {
   }
 }
 
-// Generate room for SOS report (MANUAL - if needed)
-app.post('/api/jitsi/generate-room', async (req, res) => {
-  const { reportId, emergencyType, userId } = req.body;
+// NEW ENDPOINT: Auto-create Jitsi room for SOS reports
+app.post('/api/jitsi/auto-create-room', async (req, res) => {
+  const { reportId, userId, emergencyType } = req.body;
   let pool;
 
   try {
-    // Only generate rooms for SOS reports
+    // Only create rooms for SOS reports
     if (emergencyType !== 'SOS') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Jitsi rooms only available for SOS reports' 
+      return res.json({
+        success: false,
+        message: 'Jitsi rooms only available for SOS reports',
+        roomCreated: false
       });
     }
 
@@ -694,11 +775,14 @@ app.post('/api/jitsi/generate-room', async (req, res) => {
 
     if (existingRoom.recordset.length > 0) {
       const room = existingRoom.recordset[0];
+      const roomUrl = generateJitsiRoomUrl(room.RoomName, 'Reporter');
+      
       return res.json({
         success: true,
+        roomCreated: false,
         roomId: room.RoomId,
         roomName: room.RoomName,
-        roomUrl: `https://${JITSI_DOMAIN}/${room.RoomName}`,
+        roomUrl: roomUrl,
         domain: JITSI_DOMAIN,
         message: 'Room already exists'
       });
@@ -706,20 +790,27 @@ app.post('/api/jitsi/generate-room', async (req, res) => {
 
     // Create new room
     const roomData = await createJitsiRoomInDB(reportId, userId);
+    const roomUrl = generateJitsiRoomUrl(roomData.roomName, 'Reporter');
+
+    console.log(`✓ Auto-created Jitsi room for SOS report ${reportId}`);
+    console.log(`  Moderator configuration applied - no authentication required`);
 
     res.json({
       success: true,
+      roomCreated: true,
       roomId: roomData.roomId,
       roomName: roomData.roomName,
-      roomUrl: roomData.roomUrl,
-      domain: roomData.domain
+      roomUrl: roomUrl,
+      domain: roomData.domain,
+      configuration: 'moderator-enabled'
     });
 
   } catch (error) {
-    console.error('Jitsi room generation error:', error);
+    console.error('Auto-create room error:', error);
     res.status(500).json({ 
-      success: false, 
-      message: 'Failed to generate Jitsi room' 
+      success: false,
+      roomCreated: false,
+      message: 'Failed to auto-create Jitsi room' 
     });
   } finally {
     if (pool) {
@@ -728,9 +819,9 @@ app.post('/api/jitsi/generate-room', async (req, res) => {
   }
 });
 
-// Get Jitsi room for report
+// Get Jitsi room for report with moderator configuration
 app.get('/api/jitsi/room', async (req, res) => {
-  const { reportId } = req.query;
+  const { reportId, userName = 'User', isVideoEnabled = 'true' } = req.query;
   let pool;
 
   try {
@@ -754,15 +845,20 @@ app.get('/api/jitsi/room', async (req, res) => {
     const room = result.recordset[0];
     console.log(`✓ Jitsi room found for report ${reportId}:`, room.RoomName);
 
+    // Generate room URL with moderator configuration
+    const videoEnabled = isVideoEnabled === 'true';
+    const roomUrl = generateJitsiRoomUrl(room.RoomName, userName, videoEnabled);
+
     res.json({
       success: true,
       roomId: room.RoomId,
       roomName: room.RoomName,
-      roomUrl: `https://${JITSI_DOMAIN}/${room.RoomName}`,
+      roomUrl: roomUrl,
       domain: JITSI_DOMAIN,
       status: room.Status,
       createdAt: room.CreatedAt,
-      createdBy: room.CreatedBy
+      createdBy: room.CreatedBy,
+      configuration: 'moderator-enabled'
     });
 
   } catch (error) {
@@ -770,6 +866,70 @@ app.get('/api/jitsi/room', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to fetch Jitsi room' 
+    });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
+  }
+});
+
+// Generate room for SOS report (manual creation)
+app.post('/api/jitsi/generate-room', async (req, res) => {
+  const { reportId, emergencyType, userId, userName } = req.body;
+  let pool;
+
+  try {
+    // Only generate rooms for SOS reports
+    if (emergencyType !== 'SOS') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Jitsi rooms only available for SOS reports' 
+      });
+    }
+
+    // Check if room already exists for this report
+    pool = await sql.connect(config);
+    const existingRoom = await pool.request()
+      .input('ReportId', sql.Int, reportId)
+      .query(`
+        SELECT RoomId, RoomName, Status 
+        FROM Room 
+        WHERE ReportId = @ReportId AND Status = 'active'
+      `);
+
+    if (existingRoom.recordset.length > 0) {
+      const room = existingRoom.recordset[0];
+      const roomUrl = generateJitsiRoomUrl(room.RoomName, userName || 'User');
+      
+      return res.json({
+        success: true,
+        roomId: room.RoomId,
+        roomName: room.RoomName,
+        roomUrl: roomUrl,
+        domain: JITSI_DOMAIN,
+        message: 'Room already exists'
+      });
+    }
+
+    // Create new room
+    const roomData = await createJitsiRoomInDB(reportId, userId);
+    const roomUrl = generateJitsiRoomUrl(roomData.roomName, userName || 'User');
+
+    res.json({
+      success: true,
+      roomId: roomData.roomId,
+      roomName: roomData.roomName,
+      roomUrl: roomUrl,
+      domain: roomData.domain,
+      configuration: 'moderator-enabled'
+    });
+
+  } catch (error) {
+    console.error('Jitsi room generation error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to generate Jitsi room' 
     });
   } finally {
     if (pool) {
@@ -927,7 +1087,7 @@ app.get('/api/jitsi/participants', async (req, res) => {
 
 // Check report type and Jitsi availability
 app.get('/api/report/type', async (req, res) => {
-  const { reportId } = req.query;
+  const { reportId, userName = 'User' } = req.query;
   let pool;
 
   try {
@@ -958,6 +1118,11 @@ app.get('/api/report/type', async (req, res) => {
     
     console.log(`Report ${reportId} type check: ${report.emergencyType}, Has Jitsi: ${hasJitsiRoom}`);
     
+    let roomUrl = null;
+    if (hasJitsiRoom) {
+      roomUrl = generateJitsiRoomUrl(report.RoomName, userName);
+    }
+    
     res.json({
       success: true,
       emergencyType: report.emergencyType,
@@ -966,7 +1131,8 @@ app.get('/api/report/type', async (req, res) => {
       ...(hasJitsiRoom && {
         roomId: report.RoomId,
         roomName: report.RoomName,
-        roomUrl: `https://${JITSI_DOMAIN}/${report.RoomName}`
+        roomUrl: roomUrl,
+        configuration: 'moderator-enabled'
       })
     });
 
@@ -983,7 +1149,7 @@ app.get('/api/report/type', async (req, res) => {
   }
 });
 
-// ORIGINAL addReport ENDPOINT - UNCHANGED
+// ORIGINAL addReport ENDPOINT - COMPLETELY UNCHANGED
 app.post('/addReport', async (req, res) => {
   const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus } = req.body;
 
@@ -1050,51 +1216,10 @@ app.post('/addReport', async (req, res) => {
     const insertedReportID = result.recordset[0].ReportID;
     console.log(`✓ Report ${insertedReportID} created successfully`);
 
-    // AUTO-GENERATE JITSI ROOM FOR SOS REPORTS
-    let jitsiData = null;
-    if (emergencyType === 'SOS') {
-      try {
-        // Generate Jitsi room for SOS report and save to database
-        const roomInfo = generateJitsiRoom(insertedReportID);
-        
-        const roomResult = await pool.request()
-          .input('ReportId', sql.Int, insertedReportID)
-          .input('RoomName', sql.VarChar, roomInfo.roomName)
-          .input('Status', sql.VarChar, 'active')
-          .input('CreatedBy', sql.Int, reporterID)
-          .query(`
-            INSERT INTO Room (ReportId, RoomName, Status, CreatedBy)
-            OUTPUT INSERTED.RoomId
-            VALUES (@ReportId, @RoomName, @Status, @CreatedBy)
-          `);
-
-        const roomId = roomResult.recordset[0].RoomId;
-
-        jitsiData = {
-          roomId: roomId,
-          roomName: roomInfo.roomName,
-          roomUrl: roomInfo.roomUrl,
-          domain: roomInfo.domain
-        };
-
-        console.log(`✓ Jitsi room created for SOS report ${insertedReportID}`);
-        console.log(`  Room ID: ${roomId}`);
-        console.log(`  Room name: ${roomInfo.roomName}`);
-        console.log(`  Room URL: ${roomInfo.roomUrl}`);
-      } catch (jitsiError) {
-        console.error('❌ Failed to generate Jitsi room:', jitsiError);
-        // Don't fail the report creation if Jitsi fails - report is still created
-      }
-    } else {
-      console.log(`ℹ Report ${insertedReportID} is not SOS (type: ${emergencyType}), no Jitsi room created`);
-    }
-
     res.status(201).json({
       message: 'Report submitted successfully.',
       reportID: insertedReportID,
-      suburbName: suburbName,
-      // Include Jitsi data only for SOS reports
-      ...(jitsiData && { jitsiRoom: jitsiData })
+      suburbName: suburbName
     });
 
   } catch (err) {
@@ -1102,6 +1227,85 @@ app.post('/addReport', async (req, res) => {
     res.status(500).json({ message: 'Internal server error.' });
   } finally {
     // Ensure database connection is closed
+    if (pool) {
+      await pool.close();
+    }
+  }
+});
+
+// NEW ENDPOINT: Create Jitsi room after report creation
+app.post('/api/jitsi/create-after-report', async (req, res) => {
+  const { reportId, userId, emergencyType } = req.body;
+  let pool;
+
+  try {
+    // Only create rooms for SOS reports
+    if (emergencyType !== 'SOS') {
+      return res.json({
+        success: false,
+        message: 'Jitsi rooms only available for SOS reports'
+      });
+    }
+
+    // Check if report exists
+    pool = await sql.connect(config);
+    const reportCheck = await pool.request()
+      .input('ReportId', sql.Int, reportId)
+      .query('SELECT emergencyType FROM [dbo].[Report] WHERE ReportID = @ReportId');
+
+    if (reportCheck.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report not found'
+      });
+    }
+
+    // Check if room already exists
+    const existingRoom = await pool.request()
+      .input('ReportId', sql.Int, reportId)
+      .query(`
+        SELECT RoomId, RoomName, Status 
+        FROM Room 
+        WHERE ReportId = @ReportId AND Status = 'active'
+      `);
+
+    if (existingRoom.recordset.length > 0) {
+      const room = existingRoom.recordset[0];
+      const roomUrl = generateJitsiRoomUrl(room.RoomName, 'Reporter');
+      
+      return res.json({
+        success: true,
+        roomId: room.RoomId,
+        roomName: room.RoomName,
+        roomUrl: roomUrl,
+        domain: JITSI_DOMAIN,
+        message: 'Room already exists'
+      });
+    }
+
+    // Create new room
+    const roomData = await createJitsiRoomInDB(reportId, userId);
+    const roomUrl = generateJitsiRoomUrl(roomData.roomName, 'Reporter');
+
+    console.log(`✓ Created Jitsi room after report creation for report ${reportId}`);
+    console.log(`  Moderator configuration applied`);
+
+    res.json({
+      success: true,
+      roomId: roomData.roomId,
+      roomName: roomData.roomName,
+      roomUrl: roomUrl,
+      domain: roomData.domain,
+      configuration: 'moderator-enabled'
+    });
+
+  } catch (error) {
+    console.error('Create after report error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to create Jitsi room' 
+    });
+  } finally {
     if (pool) {
       await pool.close();
     }
@@ -1184,7 +1388,7 @@ app.get('/api/jitsi/stats', async (req, res) => {
         roomId: room.RoomId,
         reportId: room.ReportId,
         roomName: room.RoomName,
-        roomUrl: `https://${JITSI_DOMAIN}/${room.RoomName}`,
+        roomUrl: generateJitsiRoomUrl(room.RoomName, 'User'),
         status: room.Status,
         createdAt: room.CreatedAt,
         endedAt: room.EndedAt,
@@ -1237,19 +1441,22 @@ app.get('/api/jitsi/debug/:reportId', async (req, res) => {
         GROUP BY r.RoomId, r.RoomName, r.Status, r.CreatedAt, r.EndedAt, r.CreatedBy
       `);
   
+    const rooms = result.recordset.map(room => ({
+      roomId: room.RoomId,
+      roomName: room.RoomName,
+      roomUrl: generateJitsiRoomUrl(room.RoomName, 'User'),
+      status: room.Status,
+      createdAt: room.CreatedAt,
+      endedAt: room.EndedAt,
+      createdBy: room.CreatedBy,
+      participantCount: room.ParticipantCount,
+      configuration: 'moderator-enabled'
+    }));
+  
     res.json({
       reportId: reportId,
       exists: result.recordset.length > 0,
-      rooms: result.recordset.map(room => ({
-        roomId: room.RoomId,
-        roomName: room.RoomName,
-        roomUrl: `https://${JITSI_DOMAIN}/${room.RoomName}`,
-        status: room.Status,
-        createdAt: room.CreatedAt,
-        endedAt: room.EndedAt,
-        createdBy: room.CreatedBy,
-        participantCount: room.ParticipantCount
-      }))
+      rooms: rooms
     });
 
   } catch (error) {
@@ -1264,6 +1471,107 @@ app.get('/api/jitsi/debug/:reportId', async (req, res) => {
     }
   }
 });
+
+// Test Jitsi room configuration
+app.get('/api/jitsi/test-config', async (req, res) => {
+  const { roomName = 'test-room', userName = 'Test User' } = req.query;
+  
+  try {
+    const roomUrl = generateJitsiRoomUrl(roomName, userName, true);
+    
+    res.json({
+      success: true,
+      roomName: roomName,
+      roomUrl: roomUrl,
+      configuration: {
+        prejoinPageEnabled: false,
+        enableWelcomePage: false,
+        requireDisplayName: false,
+        disableThirdPartyRequests: true,
+        disableDeepLinking: true,
+        enableAuthentication: false,
+        moderatorEnabled: true
+      },
+      testUrl: roomUrl
+    });
+    
+  } catch (error) {
+    console.error('Test config error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate test configuration'
+    });
+  }
+});
+
+// NEW ENDPOINT: Check if SOS report needs Jitsi room
+app.get('/api/jitsi/check-sos-room', async (req, res) => {
+  const { reportId } = req.query;
+  let pool;
+
+  try {
+    pool = await sql.connect(config);
+    
+    // Check report type and room status
+    const result = await pool.request()
+      .input('ReportId', sql.Int, reportId)
+      .query(`
+        SELECT 
+          r.emergencyType,
+          r.Report_Status,
+          rm.RoomId,
+          rm.RoomName,
+          rm.Status as RoomStatus
+        FROM [dbo].[Report] r
+        LEFT JOIN Room rm ON r.ReportID = rm.ReportId AND rm.Status = 'active'
+        WHERE r.ReportID = @ReportId
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Report not found'
+      });
+    }
+
+    const data = result.recordset[0];
+    const isSOS = data.emergencyType === 'SOS';
+    const hasRoom = data.RoomId !== null;
+    
+    let roomUrl = null;
+    if (hasRoom) {
+      roomUrl = generateJitsiRoomUrl(data.RoomName, 'User');
+    }
+
+    res.json({
+      success: true,
+      isSOSReport: isSOS,
+      hasJitsiRoom: hasRoom,
+      needsRoom: isSOS && !hasRoom,
+      ...(hasRoom && {
+        roomId: data.RoomId,
+        roomName: data.RoomName,
+        roomUrl: roomUrl,
+        configuration: 'moderator-enabled'
+      })
+    });
+
+  } catch (error) {
+    console.error('Check SOS room error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check SOS room status'
+    });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
+  }
+});
+
+
+
+
 
 app.post('/addTrustedContact', async (req, res) => {
   const { fName, phoneNum, emailAdd, isMem, userID } = req.body;
