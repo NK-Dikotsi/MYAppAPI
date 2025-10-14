@@ -616,133 +616,316 @@ app.put('/updateUser', async (req, res) => {
 });
 
 
-const { RtcTokenBuilder, RtcRole } = require('agora-token');
+// Jitsi configuration
+const JITSI_DOMAIN = "meet.jit.si"; // Use "your-domain.com" if self-hosting
 
-// In-memory storage for Agora channel mappings (use Redis in production)
-const agoraChannelMap = new Map();
-
-// Generate Agora token
-function generateAgoraToken(channelName, uid = 0) {
-  const appID = "c3110960202349228a9b5f8da61e1b45";
-  const appCertificate = "b088a0919d0c498c9bfe2e9de1bfdef7";
-  const expirationTimeInSeconds = 3600; // 1 hour
-  const currentTimestamp = Math.floor(Date.now() / 1000);
-  const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
-
-  // Build token with Agora's algorithm
-  const token = RtcTokenBuilder.buildTokenWithUid(
-    appID,
-    appCertificate,
-    channelName,
-    uid,
-    RtcRole.PUBLISHER,
-    privilegeExpiredTs
-  );
+// Generate Jitsi room name for SOS report
+function generateJitsiRoom(reportId) {
+  // Create unique, secure room name
+  const timestamp = Date.now();
+  const randomSuffix = Math.random().toString(36).substring(2, 8);
+  const roomName = `sos-${reportId}-${timestamp}-${randomSuffix}`;
   
-  return token;
+  return {
+    roomName,
+    roomUrl: `https://${JITSI_DOMAIN}/${roomName}`,
+    domain: JITSI_DOMAIN
+  };
 }
 
-// Generate channel for SOS report (MANUAL - if needed)
-app.post('/api/agora/generate-channel', async (req, res) => {
-  const { reportId, emergencyType } = req.body;
+// Create Jitsi room in database for SOS report
+async function createJitsiRoomInDB(reportId, createdBy = null) {
+  let pool;
+  try {
+    const roomInfo = generateJitsiRoom(reportId);
+    
+    pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('ReportId', sql.Int, reportId)
+      .input('RoomName', sql.VarChar, roomInfo.roomName)
+      .input('Status', sql.VarChar, 'active')
+      .input('CreatedBy', sql.Int, createdBy)
+      .query(`
+        INSERT INTO Room (ReportId, RoomName, Status, CreatedBy)
+        OUTPUT INSERTED.RoomId
+        VALUES (@ReportId, @RoomName, @Status, @CreatedBy)
+      `);
+
+    const roomId = result.recordset[0].RoomId;
+    
+    console.log(`✓ Jitsi room created in DB for report ${reportId}:`, roomInfo.roomName);
+    console.log(`  Room ID: ${roomId}`);
+    console.log(`  Room URL: ${roomInfo.roomUrl}`);
+
+    return {
+      roomId,
+      ...roomInfo
+    };
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
+  }
+}
+
+// Generate room for SOS report (MANUAL - if needed)
+app.post('/api/jitsi/generate-room', async (req, res) => {
+  const { reportId, emergencyType, userId } = req.body;
+  let pool;
 
   try {
-    // Only generate channels for SOS reports
+    // Only generate rooms for SOS reports
     if (emergencyType !== 'SOS') {
       return res.status(400).json({ 
         success: false, 
-        message: 'Agora channels only available for SOS reports' 
+        message: 'Jitsi rooms only available for SOS reports' 
       });
     }
 
-    const channelName = `sos_${reportId}_${Date.now()}`;
-    const token = generateAgoraToken(channelName);
+    // Check if room already exists for this report
+    pool = await sql.connect(config);
+    const existingRoom = await pool.request()
+      .input('ReportId', sql.Int, reportId)
+      .query(`
+        SELECT RoomId, RoomName, Status 
+        FROM Room 
+        WHERE ReportId = @ReportId AND Status = 'active'
+      `);
 
-    // Store mapping - ALWAYS use string keys
-    const reportIdKey = String(reportId);
-    agoraChannelMap.set(reportIdKey, {
-      channelName,
-      token,
-      createdAt: Date.now(),
-      emergencyType
-    });
-
-    console.log(`✓ Agora channel manually created for report ${reportId}:`, channelName);
-    console.log(`✓ Channel stored with key: "${reportIdKey}"`);
-
-    // Clean up old entries (older than 24 hours)
-    const now = Date.now();
-    for (let [key, value] of agoraChannelMap.entries()) {
-      if (now - value.createdAt > 24 * 60 * 60 * 1000) {
-        agoraChannelMap.delete(key);
-      }
+    if (existingRoom.recordset.length > 0) {
+      const room = existingRoom.recordset[0];
+      return res.json({
+        success: true,
+        roomId: room.RoomId,
+        roomName: room.RoomName,
+        roomUrl: `https://${JITSI_DOMAIN}/${room.RoomName}`,
+        domain: JITSI_DOMAIN,
+        message: 'Room already exists'
+      });
     }
+
+    // Create new room
+    const roomData = await createJitsiRoomInDB(reportId, userId);
 
     res.json({
       success: true,
-      channelName,
-      token,
-      appId: "c3110960202349228a9b5f8da61e1b45"
+      roomId: roomData.roomId,
+      roomName: roomData.roomName,
+      roomUrl: roomData.roomUrl,
+      domain: roomData.domain
     });
 
   } catch (error) {
-    console.error('Agora channel generation error:', error);
+    console.error('Jitsi room generation error:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to generate Agora channel' 
+      message: 'Failed to generate Jitsi room' 
     });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
   }
 });
 
-// Get Agora channel for report
-app.get('/api/agora/channel', async (req, res) => {
+// Get Jitsi room for report
+app.get('/api/jitsi/room', async (req, res) => {
   const { reportId } = req.query;
+  let pool;
 
   try {
-    // ALWAYS use string keys for consistency
-    const reportIdKey = String(reportId);
-    const channelData = agoraChannelMap.get(reportIdKey);
+    pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('ReportId', sql.Int, reportId)
+      .query(`
+        SELECT RoomId, RoomName, Status, CreatedAt, EndedAt, CreatedBy
+        FROM Room 
+        WHERE ReportId = @ReportId AND Status = 'active'
+      `);
 
-    console.log(`Checking Agora channel for report ${reportId} (key: "${reportIdKey}")`);
-    console.log(`Current channels in map:`, Array.from(agoraChannelMap.keys()));
-
-    if (!channelData) {
-      console.log(`✗ No Agora channel found for report ${reportId}`);
+    if (result.recordset.length === 0) {
+      console.log(`✗ No active Jitsi room found for report ${reportId}`);
       return res.status(404).json({ 
         success: false, 
-        message: 'No Agora channel found for this report' 
+        message: 'No active Jitsi room found for this report' 
       });
     }
 
-    // Check if token is expired (1 hour)
-    if (Date.now() - channelData.createdAt > 3600 * 1000) {
-      // Generate new token for existing channel
-      console.log(`Token expired for report ${reportId}, generating new token...`);
-      const newToken = generateAgoraToken(channelData.channelName);
-      channelData.token = newToken;
-      channelData.createdAt = Date.now();
-    }
-
-    console.log(`✓ Agora channel found for report ${reportId}:`, channelData.channelName);
+    const room = result.recordset[0];
+    console.log(`✓ Jitsi room found for report ${reportId}:`, room.RoomName);
 
     res.json({
       success: true,
-      channelName: channelData.channelName,
-      token: channelData.token,
-      appId: "c3110960202349228a9b5f8da61e1b45",
-      emergencyType: channelData.emergencyType
+      roomId: room.RoomId,
+      roomName: room.RoomName,
+      roomUrl: `https://${JITSI_DOMAIN}/${room.RoomName}`,
+      domain: JITSI_DOMAIN,
+      status: room.Status,
+      createdAt: room.CreatedAt,
+      createdBy: room.CreatedBy
     });
 
   } catch (error) {
-    console.error('Agora channel fetch error:', error);
+    console.error('Jitsi room fetch error:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to fetch Agora channel' 
+      message: 'Failed to fetch Jitsi room' 
     });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
   }
 });
 
-// Check report type and Agora availability
+// Join Jitsi room (record participant)
+app.post('/api/jitsi/join', async (req, res) => {
+  const { roomId, userId } = req.body;
+  let pool;
+
+  try {
+    pool = await sql.connect(config);
+    
+    // Check if user already joined and didn't leave
+    const existingParticipant = await pool.request()
+      .input('RoomId', sql.Int, roomId)
+      .input('UserId', sql.Int, userId)
+      .query(`
+        SELECT RoomParticipantId, LeftAt
+        FROM RoomParticipant
+        WHERE RoomId = @RoomId AND UserId = @UserId
+        ORDER BY JoinedAt DESC
+      `);
+
+    // If user is already in the room (hasn't left), don't create duplicate entry
+    if (existingParticipant.recordset.length > 0 && 
+        existingParticipant.recordset[0].LeftAt === null) {
+      return res.json({
+        success: true,
+        message: 'User already in room',
+        participantId: existingParticipant.recordset[0].RoomParticipantId
+      });
+    }
+
+    // Record new join
+    const result = await pool.request()
+      .input('RoomId', sql.Int, roomId)
+      .input('UserId', sql.Int, userId)
+      .query(`
+        INSERT INTO RoomParticipant (RoomId, UserId)
+        OUTPUT INSERTED.RoomParticipantId
+        VALUES (@RoomId, @UserId)
+      `);
+
+    const participantId = result.recordset[0].RoomParticipantId;
+    console.log(`✓ User ${userId} joined room ${roomId} (participant ID: ${participantId})`);
+
+    res.json({
+      success: true,
+      participantId: participantId,
+      message: 'Joined room successfully'
+    });
+
+  } catch (error) {
+    console.error('Join room error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to join room'
+    });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
+  }
+});
+
+// Leave Jitsi room (record participant leaving)
+app.post('/api/jitsi/leave', async (req, res) => {
+  const { roomId, userId } = req.body;
+  let pool;
+
+  try {
+    pool = await sql.connect(config);
+    
+    // Update the latest participation record
+    await pool.request()
+      .input('RoomId', sql.Int, roomId)
+      .input('UserId', sql.Int, userId)
+      .query(`
+        UPDATE RoomParticipant
+        SET LeftAt = dbo.GetSASTDateTime()
+        WHERE RoomParticipantId IN (
+          SELECT TOP 1 RoomParticipantId
+          FROM RoomParticipant
+          WHERE RoomId = @RoomId AND UserId = @UserId AND LeftAt IS NULL
+          ORDER BY JoinedAt DESC
+        )
+      `);
+
+    console.log(`✓ User ${userId} left room ${roomId}`);
+
+    res.json({
+      success: true,
+      message: 'Left room successfully'
+    });
+
+  } catch (error) {
+    console.error('Leave room error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to leave room'
+    });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
+  }
+});
+
+// Get room participants
+app.get('/api/jitsi/participants', async (req, res) => {
+  const { roomId } = req.query;
+  let pool;
+
+  try {
+    pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('RoomId', sql.Int, roomId)
+      .query(`
+        SELECT 
+          rp.RoomParticipantId,
+          rp.UserId,
+          u.Username,
+          u.firstName,
+          u.lastName,
+          rp.JoinedAt,
+          rp.LeftAt,
+          CASE WHEN rp.LeftAt IS NULL THEN 1 ELSE 0 END AS IsActive
+        FROM RoomParticipant rp
+        INNER JOIN Users u ON rp.UserId = u.UserID
+        WHERE rp.RoomId = @RoomId
+        ORDER BY rp.JoinedAt DESC
+      `);
+
+    res.json({
+      success: true,
+      participants: result.recordset
+    });
+
+  } catch (error) {
+    console.error('Get participants error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get participants'
+    });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
+  }
+});
+
+// Check report type and Jitsi availability
 app.get('/api/report/type', async (req, res) => {
   const { reportId } = req.query;
   let pool;
@@ -752,9 +935,15 @@ app.get('/api/report/type', async (req, res) => {
     const result = await pool.request()
       .input('ReportID', sql.Int, reportId)
       .query(`
-        SELECT emergencyType, Report_Status
-        FROM [dbo].[Report] 
-        WHERE ReportID = @ReportID
+        SELECT 
+          r.emergencyType, 
+          r.Report_Status,
+          rm.RoomId,
+          rm.RoomName,
+          rm.Status as RoomStatus
+        FROM [dbo].[Report] r
+        LEFT JOIN Room rm ON r.ReportID = rm.ReportId AND rm.Status = 'active'
+        WHERE r.ReportID = @ReportID
       `);
 
     if (result.recordset.length === 0) {
@@ -765,16 +954,20 @@ app.get('/api/report/type', async (req, res) => {
     }
 
     const report = result.recordset[0];
-    const reportIdKey = String(reportId);
-    const hasAgoraChannel = agoraChannelMap.has(reportIdKey);
+    const hasJitsiRoom = report.RoomId !== null;
     
-    console.log(`Report ${reportId} type check: ${report.emergencyType}, Has Agora: ${hasAgoraChannel}`);
+    console.log(`Report ${reportId} type check: ${report.emergencyType}, Has Jitsi: ${hasJitsiRoom}`);
     
     res.json({
       success: true,
       emergencyType: report.emergencyType,
       reportStatus: report.Report_Status,
-      hasAgoraChannel: hasAgoraChannel
+      hasJitsiRoom: hasJitsiRoom,
+      ...(hasJitsiRoom && {
+        roomId: report.RoomId,
+        roomName: report.RoomName,
+        roomUrl: `https://${JITSI_DOMAIN}/${report.RoomName}`
+      })
     });
 
   } catch (err) {
@@ -790,7 +983,7 @@ app.get('/api/report/type', async (req, res) => {
   }
 });
 
-// ORIGINAL addReport ENDPOINT - WITH IMPROVED LOGGING
+// ORIGINAL addReport ENDPOINT - UNCHANGED
 app.post('/addReport', async (req, res) => {
   const { reporterID, emergencyType, emerDescription, mediaPhoto, mediaVoice, sharedWith, reportLocation, reportStatus } = req.body;
 
@@ -857,48 +1050,51 @@ app.post('/addReport', async (req, res) => {
     const insertedReportID = result.recordset[0].ReportID;
     console.log(`✓ Report ${insertedReportID} created successfully`);
 
-    // AUTO-GENERATE AGORA CHANNEL FOR SOS REPORTS
-    let agoraData = null;
+    // AUTO-GENERATE JITSI ROOM FOR SOS REPORTS
+    let jitsiData = null;
     if (emergencyType === 'SOS') {
       try {
-        // Generate Agora channel for SOS report
-        const channelName = `sos_${insertedReportID}_${Date.now()}`;
-        const token = generateAgoraToken(channelName);
+        // Generate Jitsi room for SOS report and save to database
+        const roomInfo = generateJitsiRoom(insertedReportID);
+        
+        const roomResult = await pool.request()
+          .input('ReportId', sql.Int, insertedReportID)
+          .input('RoomName', sql.VarChar, roomInfo.roomName)
+          .input('Status', sql.VarChar, 'active')
+          .input('CreatedBy', sql.Int, reporterID)
+          .query(`
+            INSERT INTO Room (ReportId, RoomName, Status, CreatedBy)
+            OUTPUT INSERTED.RoomId
+            VALUES (@ReportId, @RoomName, @Status, @CreatedBy)
+          `);
 
-        // CRITICAL: Store with STRING key for consistency
-        const reportIdKey = String(insertedReportID);
-        agoraChannelMap.set(reportIdKey, {
-          channelName,
-          token,
-          createdAt: Date.now(),
-          emergencyType: 'SOS',
-          reportId: insertedReportID // Store for reference
-        });
+        const roomId = roomResult.recordset[0].RoomId;
 
-        agoraData = {
-          channelName,
-          token,
-          appId: "c3110960202349228a9b5f8da61e1b45"
+        jitsiData = {
+          roomId: roomId,
+          roomName: roomInfo.roomName,
+          roomUrl: roomInfo.roomUrl,
+          domain: roomInfo.domain
         };
 
-        console.log(`✓ Agora channel created for SOS report ${insertedReportID}`);
-        console.log(`  Channel name: ${channelName}`);
-        console.log(`  Stored with key: "${reportIdKey}"`);
-        console.log(`  Current channels in map:`, Array.from(agoraChannelMap.keys()));
-      } catch (agoraError) {
-        console.error('❌ Failed to generate Agora channel:', agoraError);
-        // Don't fail the report creation if Agora fails - report is still created
+        console.log(`✓ Jitsi room created for SOS report ${insertedReportID}`);
+        console.log(`  Room ID: ${roomId}`);
+        console.log(`  Room name: ${roomInfo.roomName}`);
+        console.log(`  Room URL: ${roomInfo.roomUrl}`);
+      } catch (jitsiError) {
+        console.error('❌ Failed to generate Jitsi room:', jitsiError);
+        // Don't fail the report creation if Jitsi fails - report is still created
       }
     } else {
-      console.log(`ℹ Report ${insertedReportID} is not SOS (type: ${emergencyType}), no Agora channel created`);
+      console.log(`ℹ Report ${insertedReportID} is not SOS (type: ${emergencyType}), no Jitsi room created`);
     }
 
     res.status(201).json({
       message: 'Report submitted successfully.',
       reportID: insertedReportID,
       suburbName: suburbName,
-      // Include Agora data only for SOS reports
-      ...(agoraData && { agoraChannel: agoraData })
+      // Include Jitsi data only for SOS reports
+      ...(jitsiData && { jitsiRoom: jitsiData })
     });
 
   } catch (err) {
@@ -912,94 +1108,162 @@ app.post('/addReport', async (req, res) => {
   }
 });
 
-// Clean up expired Agora channels (run this periodically)
-function cleanupExpiredAgoraChannels() {
-  const now = Date.now();
-  let cleanedCount = 0;
-  
-  for (let [reportId, channelData] of agoraChannelMap.entries()) {
-    // Remove channels older than 24 hours
-    if (now - channelData.createdAt > 24 * 60 * 60 * 1000) {
-      agoraChannelMap.delete(reportId);
-      cleanedCount++;
-    }
-  }
-  
-  if (cleanedCount > 0) {
-    console.log(`🧹 Cleaned up ${cleanedCount} expired Agora channels`);
-  }
-}
+// End a Jitsi room
+app.post('/api/jitsi/end-room', async (req, res) => {
+  const { roomId } = req.body;
+  let pool;
 
-// Run cleanup every hour
-setInterval(cleanupExpiredAgoraChannels, 60 * 60 * 1000);
-
-// Endpoint to manually clean up Agora channels (for testing)
-app.delete('/api/agora/cleanup', async (req, res) => {
   try {
-    const beforeSize = agoraChannelMap.size;
-    cleanupExpiredAgoraChannels();
-    const afterSize = agoraChannelMap.size;
+    pool = await sql.connect(config);
     
+    // Update room status to ended
+    await pool.request()
+      .input('RoomId', sql.Int, roomId)
+      .query(`
+        UPDATE Room
+        SET Status = 'ended', EndedAt = dbo.GetSASTDateTime()
+        WHERE RoomId = @RoomId
+      `);
+
+    // Mark all active participants as left
+    await pool.request()
+      .input('RoomId', sql.Int, roomId)
+      .query(`
+        UPDATE RoomParticipant
+        SET LeftAt = dbo.GetSASTDateTime()
+        WHERE RoomId = @RoomId AND LeftAt IS NULL
+      `);
+    
+    console.log(`✓ Jitsi room ${roomId} ended`);
+
     res.json({
       success: true,
-      message: `Cleaned up ${beforeSize - afterSize} expired channels`,
-      remainingChannels: afterSize
+      message: 'Room ended successfully'
     });
+
   } catch (error) {
-    console.error('Cleanup error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Cleanup failed' 
+    console.error('End room error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to end room'
     });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
   }
 });
 
-// Get Agora channel statistics (for monitoring/debugging)
-app.get('/api/agora/stats', async (req, res) => {
+// Get Jitsi room statistics
+app.get('/api/jitsi/stats', async (req, res) => {
+  let pool;
+
   try {
+    pool = await sql.connect(config);
+    const result = await pool.request()
+      .query(`
+        SELECT 
+          r.RoomId,
+          r.ReportId,
+          r.RoomName,
+          r.Status,
+          r.CreatedAt,
+          r.EndedAt,
+          COUNT(DISTINCT rp.UserId) as TotalParticipants,
+          COUNT(DISTINCT CASE WHEN rp.LeftAt IS NULL THEN rp.UserId END) as ActiveParticipants
+        FROM Room r
+        LEFT JOIN RoomParticipant rp ON r.RoomId = rp.RoomId
+        GROUP BY r.RoomId, r.ReportId, r.RoomName, r.Status, r.CreatedAt, r.EndedAt
+        ORDER BY r.CreatedAt DESC
+      `);
+
     const stats = {
-      totalChannels: agoraChannelMap.size,
-      channels: Array.from(agoraChannelMap.entries()).map(([reportId, data]) => ({
-        reportId,
-        channelName: data.channelName,
-        createdAt: new Date(data.createdAt).toISOString(),
-        emergencyType: data.emergencyType,
-        ageHours: Math.round((Date.now() - data.createdAt) / (60 * 60 * 1000))
+      totalRooms: result.recordset.length,
+      activeRooms: result.recordset.filter(r => r.Status === 'active').length,
+      rooms: result.recordset.map(room => ({
+        roomId: room.RoomId,
+        reportId: room.ReportId,
+        roomName: room.RoomName,
+        roomUrl: `https://${JITSI_DOMAIN}/${room.RoomName}`,
+        status: room.Status,
+        createdAt: room.CreatedAt,
+        endedAt: room.EndedAt,
+        totalParticipants: room.TotalParticipants,
+        activeParticipants: room.ActiveParticipants
       }))
     };
     
-    console.log('📊 Agora channel stats requested:', stats);
+    console.log('📊 Jitsi room stats requested:', stats);
     
     res.json({
       success: true,
       ...stats
     });
+
   } catch (error) {
     console.error('Stats error:', error);
     res.status(500).json({ 
       success: false, 
       message: 'Failed to get stats' 
     });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
   }
 });
 
-// Debug endpoint to check specific report's Agora channel
-app.get('/api/agora/debug/:reportId', async (req, res) => {
+// Debug endpoint to check specific report's Jitsi room
+app.get('/api/jitsi/debug/:reportId', async (req, res) => {
   const { reportId } = req.params;
-  const reportIdKey = String(reportId);
-  
-  const channelData = agoraChannelMap.get(reportIdKey);
-  
-  res.json({
-    reportId: reportId,
-    reportIdKey: reportIdKey,
-    exists: !!channelData,
-    channelData: channelData || null,
-    allKeys: Array.from(agoraChannelMap.keys()),
-    mapSize: agoraChannelMap.size
-  });
-});
+  let pool;
 
+  try {
+    pool = await sql.connect(config);
+    const result = await pool.request()
+      .input('ReportId', sql.Int, reportId)
+      .query(`
+        SELECT 
+          r.RoomId,
+          r.RoomName,
+          r.Status,
+          r.CreatedAt,
+          r.EndedAt,
+          r.CreatedBy,
+          COUNT(rp.RoomParticipantId) as ParticipantCount
+        FROM Room r
+        LEFT JOIN RoomParticipant rp ON r.RoomId = rp.RoomId
+        WHERE r.ReportId = @ReportId
+        GROUP BY r.RoomId, r.RoomName, r.Status, r.CreatedAt, r.EndedAt, r.CreatedBy
+      `);
+  
+    res.json({
+      reportId: reportId,
+      exists: result.recordset.length > 0,
+      rooms: result.recordset.map(room => ({
+        roomId: room.RoomId,
+        roomName: room.RoomName,
+        roomUrl: `https://${JITSI_DOMAIN}/${room.RoomName}`,
+        status: room.Status,
+        createdAt: room.CreatedAt,
+        endedAt: room.EndedAt,
+        createdBy: room.CreatedBy,
+        participantCount: room.ParticipantCount
+      }))
+    });
+
+  } catch (error) {
+    console.error('Debug error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Debug failed'
+    });
+  } finally {
+    if (pool) {
+      await pool.close();
+    }
+  }
+});
 
 app.post('/addTrustedContact', async (req, res) => {
   const { fName, phoneNum, emailAdd, isMem, userID } = req.body;
