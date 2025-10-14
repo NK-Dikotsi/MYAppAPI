@@ -331,23 +331,16 @@ app.use(session({
 }));
 
 
-/* SQL Server Configuration - New Config
+//SQL Server Configuration - New Config
 const config = {
   server: process.env.DB_SERVER || 'sizaadmin.database.windows.net',
   user: process.env.DB_USER || 'sizaadmin',
   password: process.env.DB_PASSWORD || 'YourPassword123!',
   database: 'siza',
   options: { encrypt: true }
-};*/
-
-// SQL Server Configuration - New Config
-const config = {
-  server: process.env.DB_SERVER || 'projectsdayserver.database.windows.net',
-  user: process.env.DB_USER || 'sizaadmin',
-  password: process.env.DB_PASSWORD || 'Ntsane@20031225',
-  database: 'projectsdaydatabase',
-  options: { encrypt: true }
 };
+
+
 
 
 app.use(cors({
