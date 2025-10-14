@@ -6,6 +6,7 @@ const { connect } = require('http2');
 const crypto = require('crypto');
 const http = require('http'); 
 const { ExpressPeerServer } = require('peer');
+const WebSocket = require('ws');
 
 const app = express();
 //payload
@@ -330,12 +331,21 @@ app.use(session({
 }));
 
 
-// SQL Server Configuration - New Config
+/* SQL Server Configuration - New Config
 const config = {
   server: process.env.DB_SERVER || 'sizaadmin.database.windows.net',
   user: process.env.DB_USER || 'sizaadmin',
   password: process.env.DB_PASSWORD || 'YourPassword123!',
   database: 'siza',
+  options: { encrypt: true }
+};*/
+
+// SQL Server Configuration - New Config
+const config = {
+  server: process.env.DB_SERVER || 'projectsdayserver.database.windows.net',
+  user: process.env.DB_USER || 'sizaadmin',
+  password: process.env.DB_PASSWORD || 'Ntsane@20031225',
+  database: 'projectsdaydatabase',
   options: { encrypt: true }
 };
 
@@ -364,65 +374,258 @@ app.use(cors());
 // =============================================================================
 // CREATE HTTP SERVER (ONCE)
 // =============================================================================
+// Create HTTP server
 const server = http.createServer(app);
 
-// =============================================================================
-// PEERJS SERVER SETUP
-// =============================================================================
-const peerServer = ExpressPeerServer(server, {
-  debug: true,
-  path: '/peerjs',
-  proxied: true,
-  allow_discovery: true
+// WebSocket Signaling Server
+const wss = new WebSocket.Server({ 
+  server, 
+  path: '/ws',
+  perMessageDeflate: false
 });
 
-app.use('/peerjs', peerServer);
+// Store rooms and connections
+const rooms = new Map();
+const userSockets = new Map();
+const socketUsers = new Map();
 
-// PeerJS server events
-peerServer.on('connection', (client) => {
-  console.log(`✅ Peer connected: ${client.getId()}`);
-});
-
-peerServer.on('disconnect', (client) => {
-  console.log(`❌ Peer disconnected: ${client.getId()}`);
-});
-
-peerServer.on('error', (error) => {
-  console.error('❌ PeerJS server error:', error);
-});
-
-// =============================================================================
-// PEERJS CONFIGURATION
-// =============================================================================
-const PEERJS_CONFIG = {
-  host: 'myappapi-yo3p.onrender.com',
-  port: 443,
-  secure: true,
-  path: '/peerjs'
-};
-
-// Generate unique room name for SOS report
-function generatePeerJSRoom(reportId) {
-  const timestamp = Date.now();
-  const randomSuffix = Math.random().toString(36).substring(2, 8);
-  const roomName = `sos-${reportId}-${timestamp}-${randomSuffix}`;
-  
-  return {
-    roomName,
-    peerConfig: PEERJS_CONFIG
-  };
+// Ping-pong for connection health
+function setupHeartbeat(ws) {
+  ws.isAlive = true;
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
 }
 
-// Create PeerJS room in database
-async function createPeerJSRoomInDB(reportId, createdBy = null) {
+// Heartbeat interval
+const heartbeatInterval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      console.log('Terminating dead WebSocket connection');
+      return ws.terminate();
+    }
+    ws.isAlive = false;
+    ws.ping(() => {});
+  });
+}, 30000);
+
+wss.on('connection', (ws, req) => {
+  console.log('🔌 New WebSocket connection from:', req.socket.remoteAddress);
+  setupHeartbeat(ws);
+
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      console.log('📨 Received:', data.type);
+
+      switch (data.type) {
+        case 'join':
+          handleJoin(ws, data);
+          break;
+        case 'offer':
+          handleOffer(ws, data);
+          break;
+        case 'answer':
+          handleAnswer(ws, data);
+          break;
+        case 'candidate':
+          handleCandidate(ws, data);
+          break;
+        case 'leave':
+          handleLeave(ws, data);
+          break;
+        case 'ping':
+          ws.send(JSON.stringify({ type: 'pong' }));
+          break;
+        default:
+          console.warn('Unknown message type:', data.type);
+      }
+    } catch (error) {
+      console.error('Error handling message:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Invalid message format'
+      }));
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('🔌 WebSocket disconnected');
+    handleDisconnect(ws);
+  });
+
+  ws.on('error', (error) => {
+    console.error('WebSocket error:', error);
+  });
+});
+
+function handleJoin(ws, data) {
+  const { room, userId, userName } = data;
+  
+  // Store user info
+  socketUsers.set(ws, { userId, userName, roomName: room });
+  userSockets.set(userId, ws);
+
+  // Add to room
+  if (!rooms.has(room)) {
+    rooms.set(room, new Set());
+  }
+  rooms.get(room).add(ws);
+
+  console.log(`✅ User ${userName} (${userId}) joined room ${room}`);
+
+  // Get existing participants
+  const existingUsers = [];
+  rooms.get(room).forEach((participant) => {
+    if (participant !== ws && participant.readyState === WebSocket.OPEN) {
+      const participantInfo = socketUsers.get(participant);
+      if (participantInfo) {
+        existingUsers.push({
+          userId: participantInfo.userId,
+          userName: participantInfo.userName
+        });
+      }
+    }
+  });
+
+  // Send existing users to new participant
+  existingUsers.forEach((user) => {
+    ws.send(JSON.stringify({
+      type: 'new-user',
+      userId: user.userId,
+      userName: user.userName
+    }));
+  });
+
+  // Notify existing participants about new user
+  rooms.get(room).forEach((participant) => {
+    if (participant !== ws && participant.readyState === WebSocket.OPEN) {
+      participant.send(JSON.stringify({
+        type: 'new-user',
+        userId: userId,
+        userName: userName
+      }));
+    }
+  });
+
+  // Send confirmation
+  ws.send(JSON.stringify({
+    type: 'joined',
+    room: room,
+    userId: userId,
+    existingUsers: existingUsers
+  }));
+}
+
+function handleOffer(ws, data) {
+  const { offer, target } = data;
+  const sender = socketUsers.get(ws);
+  
+  if (!sender) return;
+
+  const targetSocket = userSockets.get(target);
+  if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+    targetSocket.send(JSON.stringify({
+      type: 'offer',
+      offer: offer,
+      from: sender.userId
+    }));
+    console.log(`📤 Forwarded offer from ${sender.userId} to ${target}`);
+  } else {
+    console.warn(`❌ Target user ${target} not found or disconnected`);
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: `User ${target} not available`
+    }));
+  }
+}
+
+function handleAnswer(ws, data) {
+  const { answer, target } = data;
+  const sender = socketUsers.get(ws);
+  
+  if (!sender) return;
+
+  const targetSocket = userSockets.get(target);
+  if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+    targetSocket.send(JSON.stringify({
+      type: 'answer',
+      answer: answer,
+      from: sender.userId
+    }));
+    console.log(`📤 Forwarded answer from ${sender.userId} to ${target}`);
+  }
+}
+
+function handleCandidate(ws, data) {
+  const { candidate, target } = data;
+  const sender = socketUsers.get(ws);
+  
+  if (!sender) return;
+
+  const targetSocket = userSockets.get(target);
+  if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+    targetSocket.send(JSON.stringify({
+      type: 'candidate',
+      candidate: candidate,
+      from: sender.userId
+    }));
+    console.log(`📤 Forwarded ICE candidate from ${sender.userId} to ${target}`);
+  }
+}
+
+function handleLeave(ws, data) {
+  const userInfo = socketUsers.get(ws);
+  if (!userInfo) return;
+
+  const { roomName, userId } = userInfo;
+  
+  // Remove from room
+  const room = rooms.get(roomName);
+  if (room) {
+    room.delete(ws);
+    
+    // Notify other participants
+    room.forEach((participant) => {
+      if (participant.readyState === WebSocket.OPEN) {
+        participant.send(JSON.stringify({
+          type: 'user-left',
+          userId: userId
+        }));
+      }
+    });
+
+    // Clean up empty rooms
+    if (room.size === 0) {
+      rooms.delete(roomName);
+      console.log(`🗑️ Room ${roomName} cleaned up (empty)`);
+    }
+  }
+
+  // Clean up mappings
+  socketUsers.delete(ws);
+  userSockets.delete(userId);
+  
+  console.log(`👋 User ${userId} left room ${roomName}`);
+}
+
+function handleDisconnect(ws) {
+  const userInfo = socketUsers.get(ws);
+  if (userInfo) {
+    handleLeave(ws, { room: userInfo.roomName });
+  }
+}
+
+// Database room management
+async function createRoomInDB(reportId, createdBy = null) {
   let pool;
   try {
-    const roomInfo = generatePeerJSRoom(reportId);
+    const roomName = `sos-${reportId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     
     pool = await sql.connect(config);
     const result = await pool.request()
       .input('ReportId', sql.Int, reportId)
-      .input('RoomName', sql.VarChar, roomInfo.roomName)
+      .input('RoomName', sql.VarChar, roomName)
       .input('Status', sql.VarChar, 'active')
       .input('CreatedBy', sql.Int, createdBy)
       .query(`
@@ -433,45 +636,35 @@ async function createPeerJSRoomInDB(reportId, createdBy = null) {
 
     const roomId = result.recordset[0].RoomId;
     
-    console.log(`✓ PeerJS room created for report ${reportId}: ${roomInfo.roomName}`);
-    return {
-      roomId,
-      ...roomInfo
-    };
+    console.log(`✓ Room created for report ${reportId}: ${roomName}`);
+    return { roomId, roomName };
   } catch (error) {
-    console.error('Error creating PeerJS room in DB:', error);
+    console.error('Error creating room in DB:', error);
     throw error;
   } finally {
-    if (pool) {
-      await pool.close();
-    }
+    if (pool) await pool.close();
   }
 }
 
-// =============================================================================
-// PEERJS ENDPOINTS
-// =============================================================================
-
-// Create PeerJS room for SOS report
+// API Endpoints
 app.post('/api/peerjs/create-after-report', async (req, res) => {
-  console.log('📞 Creating PeerJS room for report:', req.body);
+  console.log('📞 Creating room for report:', req.body);
   
   const { reportId, userId, emergencyType } = req.body;
   let pool;
 
   try {
-    // Validate input
     if (!reportId || !userId || !emergencyType) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields: reportId, userId, emergencyType'
+        message: 'Missing required fields'
       });
     }
 
     if (emergencyType !== 'SOS') {
       return res.json({
         success: false,
-        message: 'PeerJS rooms only available for SOS reports'
+        message: 'Rooms only available for SOS reports'
       });
     }
 
@@ -488,208 +681,65 @@ app.post('/api/peerjs/create-after-report', async (req, res) => {
 
     if (existingRoom.recordset.length > 0) {
       const room = existingRoom.recordset[0];
-      console.log(`✓ Room already exists for report ${reportId}: ${room.RoomName}`);
       return res.json({
         success: true,
         roomCreated: false,
         roomId: room.RoomId,
         roomName: room.RoomName,
-        peerConfig: PEERJS_CONFIG,
         message: 'Room already exists'
       });
     }
 
     // Create new room
-    const roomData = await createPeerJSRoomInDB(reportId, userId);
+    const roomData = await createRoomInDB(reportId, userId);
     
-    console.log(`✅ Successfully created PeerJS room for report ${reportId}`);
-
     res.json({
       success: true,
       roomCreated: true,
       roomId: roomData.roomId,
-      roomName: roomData.roomName,
-      peerConfig: roomData.peerConfig
+      roomName: roomData.roomName
     });
 
   } catch (error) {
-    console.error('❌ Create PeerJS room error:', error);
+    console.error('❌ Create room error:', error);
     res.status(500).json({ 
       success: false,
-      message: 'Failed to create PeerJS room: ' + error.message
+      message: 'Failed to create room: ' + error.message
     });
   } finally {
-    if (pool) {
-      await pool.close();
-    }
+    if (pool) await pool.close();
   }
 });
 
-// Get PeerJS room info
-app.get('/api/peerjs/room', async (req, res) => {
-  const { reportId } = req.query;
-  let pool;
-
-  try {
-    if (!reportId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'reportId is required' 
-      });
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    websocket: {
+      connections: wss.clients.size,
+      rooms: rooms.size
     }
-
-    pool = await sql.connect(config);
-    const result = await pool.request()
-      .input('ReportId', sql.Int, reportId)
-      .query(`
-        SELECT RoomId, RoomName, Status
-        FROM Room 
-        WHERE ReportId = @ReportId AND Status = 'active'
-      `);
-
-    if (result.recordset.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'No active PeerJS room found' 
-      });
-    }
-
-    const room = result.recordset[0];
-    
-    res.json({
-      success: true,
-      roomId: room.RoomId,
-      roomName: room.RoomName,
-      peerConfig: PEERJS_CONFIG
-    });
-
-  } catch (error) {
-    console.error('PeerJS room fetch error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch PeerJS room' 
-    });
-  } finally {
-    if (pool) {
-      await pool.close();
-    }
-  }
-});
-
-// Join room
-app.post('/api/peerjs/join', async (req, res) => {
-  const { roomId, userId } = req.body;
-  let pool;
-
-  try {
-    if (!roomId || !userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'roomId and userId are required'
-      });
-    }
-
-    pool = await sql.connect(config);
-    
-    const result = await pool.request()
-      .input('RoomId', sql.Int, roomId)
-      .input('UserId', sql.Int, userId)
-      .query(`
-        INSERT INTO RoomParticipant (RoomId, UserId)
-        OUTPUT INSERTED.RoomParticipantId
-        VALUES (@RoomId, @UserId)
-      `);
-
-    const participantId = result.recordset[0].RoomParticipantId;
-    console.log(`✓ User ${userId} joined PeerJS room ${roomId}`);
-
-    res.json({
-      success: true,
-      participantId: participantId
-    });
-
-  } catch (error) {
-    console.error('Join PeerJS room error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to join room'
-    });
-  } finally {
-    if (pool) {
-      await pool.close();
-    }
-  }
-});
-
-// Leave room
-app.post('/api/peerjs/leave', async (req, res) => {
-  const { roomId, userId } = req.body;
-  let pool;
-
-  try {
-    if (!roomId || !userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'roomId and userId are required'
-      });
-    }
-
-    pool = await sql.connect(config);
-    
-    await pool.request()
-      .input('RoomId', sql.Int, roomId)
-      .input('UserId', sql.Int, userId)
-      .query(`
-        UPDATE RoomParticipant
-        SET LeftAt = dbo.GetSASTDateTime()
-        WHERE RoomParticipantId IN (
-          SELECT TOP 1 RoomParticipantId
-          FROM RoomParticipant
-          WHERE RoomId = @RoomId AND UserId = @UserId AND LeftAt IS NULL
-          ORDER BY JoinedAt DESC
-        )
-      `);
-
-    console.log(`✓ User ${userId} left PeerJS room ${roomId}`);
-
-    res.json({
-      success: true,
-      message: 'Left room successfully'
-    });
-
-  } catch (error) {
-    console.error('Leave PeerJS room error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to leave room'
-    });
-  } finally {
-    if (pool) {
-      await pool.close();
-    }
-  }
-});
-
-
-// Add this test endpoint to verify the server is working
-app.get('/api/test', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Server is working!',
-    timestamp: new Date().toISOString()
   });
 });
 
-// =============================================================================
-// SERVER STARTUP
-// =============================================================================
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-  console.log(`✅ PeerJS server running on /peerjs`);
-  console.log(`✅ Test endpoint: https://myappapi-yo3p.onrender.com/api/test`);
+// Cleanup on shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  clearInterval(heartbeatInterval);
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });
 
+// Start server
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+  console.log(`✅ HTTP Server running on port ${PORT}`);
+  console.log(`✅ WebSocket server running on ws://localhost:${PORT}/ws`);
+  console.log(`✅ Health check available at http://localhost:${PORT}/health`);
+});
+ 
 // Registration Endpoint
 app.post('/register', async (req, res) => {
   const { fullName, email, password, phoneNumber, role, dob, homeAddress, imageBase64, gender } = req.body;
