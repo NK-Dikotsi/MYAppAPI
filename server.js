@@ -345,7 +345,12 @@ const config = {
   user: process.env.DB_USER || 'sizaadmin',
   password: process.env.DB_PASSWORD || 'Ntsane@20031225',
   database: 'projectsdaydatabase',
-  options: { encrypt: true }
+  options: {
+    encrypt: true,
+    trustServerCertificate: false, // Set to true if using self-signed certs in dev
+    enableArithAbort: true
+  },
+  port: 1433 // Default SQL Server port
 };
 
 app.use(cors({
