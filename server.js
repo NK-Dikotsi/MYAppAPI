@@ -331,14 +331,22 @@ app.use(session({
 
 
 // SQL Server Configuration - New Config
-const config = {
+/*const config = {
   server: process.env.DB_SERVER || 'siza.database.windows.net',
   user: process.env.DB_USER || 'sizaadmin',
   password: process.env.DB_PASSWORD || 'Ntsane@20031225',
   database: 'siza',
   options: { encrypt: true }
-};
+};*/
 
+
+const config = {
+  server: process.env.DB_SERVER || 'projectsdayserver.database.windows.net',
+  user: process.env.DB_USER || 'sizaadmin',
+  password: process.env.DB_PASSWORD || 'Ntsane@20031225',
+  database: 'projectsdaydatabase',
+  options: { encrypt: true }
+};
 
 app.use(cors({
   origin: true, // Or true for all origins
