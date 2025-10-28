@@ -7750,29 +7750,32 @@ app.patch('/user/:id/set-volunteer', async (req, res) => {
     const userId = req.params.id;
 
     try {
-        await sql.connect(dbConfig);
+        const pool = await sql.connect(dbConfig);
 
         // Update role to Volunteer
-        const result = await sql.query`
-            UPDATE [dbo].[CommunityMember]
-            SET [Role] = 'Volunteer'
-            WHERE [UserID] = ${userId};
-        `;
+        const result = await pool.request()
+            .input('UserID', sql.Int, userId)
+            .query(`
+                UPDATE [dbo].[CommunityMember]
+                SET [Role] = 'Volunteer'
+                WHERE [UserID] = @UserID;
+            `);
 
-        // Check if any row was updated
         if (result.rowsAffected[0] === 0) {
             return res.status(404).json({ error: "User not found" });
         }
 
-        res.json({ message: "Role set to Volunteer successfully" });
+        res.status(200).json({ message: "Role set to Volunteer successfully" });
 
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Database error" });
+        console.error("Database error:", err);
+        res.status(500).json({ error: "Internal server error" });
     } finally {
-        sql.close();
+        // Ensure the SQL connection closes only if you're not using a global pool
+        await sql.close();
     }
 });
+
 // Get support statistics
 app.get('/api/support/stats', async (req, res) => {
   try {
