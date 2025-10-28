@@ -7770,10 +7770,8 @@ app.patch('/user/:id/set-volunteer', async (req, res) => {
     } catch (err) {
         console.error("Database error:", err);
         res.status(500).json({ error: "Internal server error" });
-    } finally {
-        // Ensure the SQL connection closes only if you're not using a global pool
-        await sql.close();
     }
+    // Remove the sql.close() call if you're using connection pooling
 });
 
 // Get support statistics
