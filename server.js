@@ -2402,7 +2402,7 @@ app.get('/getNotification', async (req, res) => {
     const result = await pool.request()
       .input('userId', sql.BigInt, userId)
       .query(`SELECT * FROM [dbo].[Notification] WHERE userId = @userId AND readStatus='unread'
-        ORDER BY n.dateCreated DESC`);
+        ORDER BY dateCreated DESC`);
 
     if (result.recordset.length === 0) {
       return res.status(404).json({ message: 'No notifications found.' });
