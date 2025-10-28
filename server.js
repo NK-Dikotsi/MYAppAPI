@@ -7745,7 +7745,34 @@ app.put('/api/support/items/:type/:id/status', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// Route to set role to Volunteer
+app.patch('/user/:id/set-volunteer', async (req, res) => {
+    const userId = req.params.id;
 
+    try {
+        await sql.connect(dbConfig);
+
+        // Update role to Volunteer
+        const result = await sql.query`
+            UPDATE [dbo].[CommunityMember]
+            SET [Role] = 'Volunteer'
+            WHERE [UserID] = ${userId};
+        `;
+
+        // Check if any row was updated
+        if (result.rowsAffected[0] === 0) {
+            return res.status(404).json({ error: "User not found" });
+        }
+
+        res.json({ message: "Role set to Volunteer successfully" });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Database error" });
+    } finally {
+        sql.close();
+    }
+});
 // Get support statistics
 app.get('/api/support/stats', async (req, res) => {
   try {
