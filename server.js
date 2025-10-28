@@ -2405,9 +2405,9 @@ app.get('/getNotification', async (req, res) => {
 FROM [dbo].[Notification] n
 JOIN [dbo].[Report] r
   ON n.reportID = r.ReportID
-WHERE n.userId = @userId
+WHERE n.userId = 1
   AND n.readStatus = 'unread'
-  AND r.Report_Status <> 'On-going'
+  AND r.Report_Status = 'On-going'
 ORDER BY n.createdDate DESC;`);
 
     if (result.recordset.length === 0) {
