@@ -4,7 +4,7 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const { connect } = require('http2');
 const crypto = require('crypto');
-const http = require('http'); 
+const http = require('http');
 const { ExpressPeerServer } = require('peer');
 
 const app = express();
@@ -422,7 +422,7 @@ function generatePeerJSRoom(reportId) {
   const timestamp = Date.now();
   const randomSuffix = Math.random().toString(36).substring(2, 8);
   const roomName = `sos-${reportId}-${timestamp}-${randomSuffix}`;
-  
+
   return {
     roomName,
     peerConfig: PEERJS_CONFIG
@@ -434,7 +434,7 @@ async function createPeerJSRoomInDB(reportId, createdBy = null) {
   let pool;
   try {
     const roomInfo = generatePeerJSRoom(reportId);
-    
+
     pool = await sql.connect(config);
     const result = await pool.request()
       .input('ReportId', sql.Int, reportId)
@@ -448,7 +448,7 @@ async function createPeerJSRoomInDB(reportId, createdBy = null) {
       `);
 
     const roomId = result.recordset[0].RoomId;
-    
+
     console.log(`✓ PeerJS room created for report ${reportId}: ${roomInfo.roomName}`);
     return {
       roomId,
@@ -471,7 +471,7 @@ async function createPeerJSRoomInDB(reportId, createdBy = null) {
 // Create PeerJS room for SOS report
 app.post('/api/peerjs/create-after-report', async (req, res) => {
   console.log('📞 Creating PeerJS room for report:', req.body);
-  
+
   const { reportId, userId, emergencyType } = req.body;
   let pool;
 
@@ -492,7 +492,7 @@ app.post('/api/peerjs/create-after-report', async (req, res) => {
     }
 
     pool = await sql.connect(config);
-    
+
     // Check if room exists
     const existingRoom = await pool.request()
       .input('ReportId', sql.Int, reportId)
@@ -517,7 +517,7 @@ app.post('/api/peerjs/create-after-report', async (req, res) => {
 
     // Create new room
     const roomData = await createPeerJSRoomInDB(reportId, userId);
-    
+
     console.log(`✅ Successfully created PeerJS room for report ${reportId}`);
 
     res.json({
@@ -530,7 +530,7 @@ app.post('/api/peerjs/create-after-report', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Create PeerJS room error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Failed to create PeerJS room: ' + error.message
     });
@@ -548,9 +548,9 @@ app.get('/api/peerjs/room', async (req, res) => {
 
   try {
     if (!reportId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'reportId is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'reportId is required'
       });
     }
 
@@ -564,14 +564,14 @@ app.get('/api/peerjs/room', async (req, res) => {
       `);
 
     if (result.recordset.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'No active PeerJS room found' 
+      return res.status(404).json({
+        success: false,
+        message: 'No active PeerJS room found'
       });
     }
 
     const room = result.recordset[0];
-    
+
     res.json({
       success: true,
       roomId: room.RoomId,
@@ -581,9 +581,9 @@ app.get('/api/peerjs/room', async (req, res) => {
 
   } catch (error) {
     console.error('PeerJS room fetch error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch PeerJS room' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch PeerJS room'
     });
   } finally {
     if (pool) {
@@ -606,7 +606,7 @@ app.post('/api/peerjs/join', async (req, res) => {
     }
 
     pool = await sql.connect(config);
-    
+
     const result = await pool.request()
       .input('RoomId', sql.Int, roomId)
       .input('UserId', sql.Int, userId)
@@ -651,7 +651,7 @@ app.post('/api/peerjs/leave', async (req, res) => {
     }
 
     pool = await sql.connect(config);
-    
+
     await pool.request()
       .input('RoomId', sql.Int, roomId)
       .input('UserId', sql.Int, userId)
@@ -975,7 +975,7 @@ function generateJitsiRoom(reportId) {
   const timestamp = Date.now();
   const randomSuffix = Math.random().toString(36).substring(2, 8);
   const roomName = `sos-${reportId}-${timestamp}-${randomSuffix}`;
-  
+
   return {
     roomName,
     roomUrl: `https://${JITSI_DOMAIN}/${roomName}`,
@@ -1039,7 +1039,7 @@ async function createJitsiRoomInDB(reportId, createdBy = null) {
   let pool;
   try {
     const roomInfo = generateJitsiRoom(reportId);
-    
+
     pool = await sql.connect(config);
     const result = await pool.request()
       .input('ReportId', sql.Int, reportId)
@@ -1053,7 +1053,7 @@ async function createJitsiRoomInDB(reportId, createdBy = null) {
       `);
 
     const roomId = result.recordset[0].RoomId;
-    
+
     console.log(`✓ Jitsi room created in DB for report ${reportId}:`, roomInfo.roomName);
     console.log(`  Room ID: ${roomId}`);
     console.log(`  Room URL: ${roomInfo.roomUrl}`);
@@ -1097,7 +1097,7 @@ app.post('/api/jitsi/auto-create-room', async (req, res) => {
     if (existingRoom.recordset.length > 0) {
       const room = existingRoom.recordset[0];
       const roomUrl = generateJitsiRoomUrl(room.RoomName, 'Reporter');
-      
+
       return res.json({
         success: true,
         roomCreated: false,
@@ -1128,10 +1128,10 @@ app.post('/api/jitsi/auto-create-room', async (req, res) => {
 
   } catch (error) {
     console.error('Auto-create room error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       roomCreated: false,
-      message: 'Failed to auto-create Jitsi room' 
+      message: 'Failed to auto-create Jitsi room'
     });
   } finally {
     if (pool) {
@@ -1157,9 +1157,9 @@ app.get('/api/jitsi/room', async (req, res) => {
 
     if (result.recordset.length === 0) {
       console.log(`✗ No active Jitsi room found for report ${reportId}`);
-      return res.status(404).json({ 
-        success: false, 
-        message: 'No active Jitsi room found for this report' 
+      return res.status(404).json({
+        success: false,
+        message: 'No active Jitsi room found for this report'
       });
     }
 
@@ -1184,9 +1184,9 @@ app.get('/api/jitsi/room', async (req, res) => {
 
   } catch (error) {
     console.error('Jitsi room fetch error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch Jitsi room' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch Jitsi room'
     });
   } finally {
     if (pool) {
@@ -1203,9 +1203,9 @@ app.post('/api/jitsi/generate-room', async (req, res) => {
   try {
     // Only generate rooms for SOS reports
     if (emergencyType !== 'SOS') {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Jitsi rooms only available for SOS reports' 
+      return res.status(400).json({
+        success: false,
+        message: 'Jitsi rooms only available for SOS reports'
       });
     }
 
@@ -1222,7 +1222,7 @@ app.post('/api/jitsi/generate-room', async (req, res) => {
     if (existingRoom.recordset.length > 0) {
       const room = existingRoom.recordset[0];
       const roomUrl = generateJitsiRoomUrl(room.RoomName, userName || 'User');
-      
+
       return res.json({
         success: true,
         roomId: room.RoomId,
@@ -1248,9 +1248,9 @@ app.post('/api/jitsi/generate-room', async (req, res) => {
 
   } catch (error) {
     console.error('Jitsi room generation error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to generate Jitsi room' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate Jitsi room'
     });
   } finally {
     if (pool) {
@@ -1266,7 +1266,7 @@ app.post('/api/jitsi/join', async (req, res) => {
 
   try {
     pool = await sql.connect(config);
-    
+
     // Check if user already joined and didn't leave
     const existingParticipant = await pool.request()
       .input('RoomId', sql.Int, roomId)
@@ -1279,8 +1279,8 @@ app.post('/api/jitsi/join', async (req, res) => {
       `);
 
     // If user is already in the room (hasn't left), don't create duplicate entry
-    if (existingParticipant.recordset.length > 0 && 
-        existingParticipant.recordset[0].LeftAt === null) {
+    if (existingParticipant.recordset.length > 0 &&
+      existingParticipant.recordset[0].LeftAt === null) {
       return res.json({
         success: true,
         message: 'User already in room',
@@ -1327,7 +1327,7 @@ app.post('/api/jitsi/leave', async (req, res) => {
 
   try {
     pool = await sql.connect(config);
-    
+
     // Update the latest participation record
     await pool.request()
       .input('RoomId', sql.Int, roomId)
@@ -1428,22 +1428,22 @@ app.get('/api/report/type', async (req, res) => {
       `);
 
     if (result.recordset.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Report not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Report not found'
       });
     }
 
     const report = result.recordset[0];
     const hasJitsiRoom = report.RoomId !== null;
-    
+
     console.log(`Report ${reportId} type check: ${report.emergencyType}, Has Jitsi: ${hasJitsiRoom}`);
-    
+
     let roomUrl = null;
     if (hasJitsiRoom) {
       roomUrl = generateJitsiRoomUrl(report.RoomName, userName);
     }
-    
+
     res.json({
       success: true,
       emergencyType: report.emergencyType,
@@ -1459,9 +1459,9 @@ app.get('/api/report/type', async (req, res) => {
 
   } catch (err) {
     console.error('Error fetching report type:', err);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
     });
   } finally {
     if (pool) {
@@ -1593,7 +1593,7 @@ app.post('/api/jitsi/create-after-report', async (req, res) => {
     if (existingRoom.recordset.length > 0) {
       const room = existingRoom.recordset[0];
       const roomUrl = generateJitsiRoomUrl(room.RoomName, 'Reporter');
-      
+
       return res.json({
         success: true,
         roomId: room.RoomId,
@@ -1621,9 +1621,9 @@ app.post('/api/jitsi/create-after-report', async (req, res) => {
 
   } catch (error) {
     console.error('Create after report error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      message: 'Failed to create Jitsi room' 
+      message: 'Failed to create Jitsi room'
     });
   } finally {
     if (pool) {
@@ -1639,7 +1639,7 @@ app.post('/api/jitsi/end-room', async (req, res) => {
 
   try {
     pool = await sql.connect(config);
-    
+
     // Update room status to ended
     await pool.request()
       .input('RoomId', sql.Int, roomId)
@@ -1657,7 +1657,7 @@ app.post('/api/jitsi/end-room', async (req, res) => {
         SET LeftAt = dbo.GetSASTDateTime()
         WHERE RoomId = @RoomId AND LeftAt IS NULL
       `);
-    
+
     console.log(`✓ Jitsi room ${roomId} ended`);
 
     res.json({
@@ -1716,9 +1716,9 @@ app.get('/api/jitsi/stats', async (req, res) => {
         activeParticipants: room.ActiveParticipants
       }))
     };
-    
+
     console.log('📊 Jitsi room stats requested:', stats);
-    
+
     res.json({
       success: true,
       ...stats
@@ -1726,9 +1726,9 @@ app.get('/api/jitsi/stats', async (req, res) => {
 
   } catch (error) {
     console.error('Stats error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get stats' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get stats'
     });
   } finally {
     if (pool) {
@@ -1760,7 +1760,7 @@ app.get('/api/jitsi/debug/:reportId', async (req, res) => {
         WHERE r.ReportId = @ReportId
         GROUP BY r.RoomId, r.RoomName, r.Status, r.CreatedAt, r.EndedAt, r.CreatedBy
       `);
-  
+
     const rooms = result.recordset.map(room => ({
       roomId: room.RoomId,
       roomName: room.RoomName,
@@ -1772,7 +1772,7 @@ app.get('/api/jitsi/debug/:reportId', async (req, res) => {
       participantCount: room.ParticipantCount,
       configuration: 'legitimate'
     }));
-  
+
     res.json({
       reportId: reportId,
       exists: result.recordset.length > 0,
@@ -1795,10 +1795,10 @@ app.get('/api/jitsi/debug/:reportId', async (req, res) => {
 // Test Jitsi room configuration - UPDATED with legitimate config
 app.get('/api/jitsi/test-config', async (req, res) => {
   const { roomName = 'test-room', userName = 'Test User' } = req.query;
-  
+
   try {
     const roomUrl = generateJitsiRoomUrl(roomName, userName, true);
-    
+
     res.json({
       success: true,
       roomName: roomName,
@@ -1813,7 +1813,7 @@ app.get('/api/jitsi/test-config', async (req, res) => {
       },
       testUrl: roomUrl
     });
-    
+
   } catch (error) {
     console.error('Test config error:', error);
     res.status(500).json({
@@ -1830,7 +1830,7 @@ app.get('/api/jitsi/check-sos-room', async (req, res) => {
 
   try {
     pool = await sql.connect(config);
-    
+
     // Check report type and room status
     const result = await pool.request()
       .input('ReportId', sql.Int, reportId)
@@ -1856,7 +1856,7 @@ app.get('/api/jitsi/check-sos-room', async (req, res) => {
     const data = result.recordset[0];
     const isSOS = data.emergencyType === 'SOS';
     const hasRoom = data.RoomId !== null;
-    
+
     let roomUrl = null;
     if (hasRoom) {
       roomUrl = generateJitsiRoomUrl(data.RoomName, 'User');
@@ -2363,7 +2363,7 @@ app.get('/getReportWithReporter', async (req, res) => {
         Report_Location: row.Report_Location,
         Report_Status: row.Report_Status,
         ReporterID: row.ReporterID,
-        dateReported : row.dateReported,
+        dateReported: row.dateReported,
       },
       Reporter: {
         FullName: row.FullName,
@@ -2401,7 +2401,14 @@ app.get('/getNotification', async (req, res) => {
     const pool = await sql.connect(config);
     const result = await pool.request()
       .input('userId', sql.BigInt, userId)
-      .query(`SELECT * FROM [dbo].[Notification] WHERE userId = @userId AND readStatus='unread'`);
+      .query(`    SELECT n.*, r.*
+    FROM [dbo].[Notification] n
+    JOIN [dbo].[Report] r
+        ON n.userId = r.ReporterID
+    WHERE n.userId = @userId
+      AND n.readStatus = 'unread'
+      AND r.Report_Status <> 'On-going'
+      ORDER BY r.dateReported DESC`);
 
     if (result.recordset.length === 0) {
       return res.status(404).json({ message: 'No notifications found.' });
@@ -4928,10 +4935,10 @@ app.post('/login-admin', async (req, res) => {
       const communitym = communityResult.recordset[0] || {};
       const role = communitym.Role || 'Volunteer';
 
-          
-    if (role !== "CommunityLeader") {
-      return res.status(401).json({ message: 'Invalid credentials.' });
-    }
+
+      if (role !== "CommunityLeader") {
+        return res.status(401).json({ message: 'Invalid credentials.' });
+      }
 
       res.json({
         success: true,
@@ -7041,7 +7048,7 @@ app.get('/api/analytics/messages', async (req, res) => {
 app.get('/api/voting-settings', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     // First check if there's an active session
     const activeResult = await pool.request()
       .query(`
@@ -7103,7 +7110,7 @@ app.put('/api/voting-settings/update', async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    
+
     // Check if there's already an active session
     const activeSessionCheck = await pool.request().query(`
       SELECT TOP 1 SettingID, VotingEnabled, EndDate 
@@ -7114,8 +7121,8 @@ app.put('/api/voting-settings/update', async (req, res) => {
 
     // If trying to enable voting but there's already an active session
     if (VotingEnabled && activeSessionCheck.recordset.length > 0) {
-      return res.status(400).json({ 
-        error: 'There is already an active voting session. Please end the current session first.' 
+      return res.status(400).json({
+        error: 'There is already an active voting session. Please end the current session first.'
       });
     }
 
@@ -7177,7 +7184,7 @@ app.post('/api/voting-settings/new-session', async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    
+
     // Check if there are any active sessions
     const activeSessionCheck = await pool.request().query(`
       SELECT TOP 1 SettingID 
@@ -7186,8 +7193,8 @@ app.post('/api/voting-settings/new-session', async (req, res) => {
     `);
 
     if (activeSessionCheck.recordset.length > 0) {
-      return res.status(400).json({ 
-        error: 'Cannot start new session while there is an active voting session.' 
+      return res.status(400).json({
+        error: 'Cannot start new session while there is an active voting session.'
       });
     }
 
@@ -7219,11 +7226,11 @@ app.post('/api/voting-settings/new-session', async (req, res) => {
       `);
 
     const newSettingID = result.recordset[0].NewSettingID;
-    
-    res.json({ 
-      success: true, 
+
+    res.json({
+      success: true,
       message: 'New voting session started successfully',
-      newSettingID 
+      newSettingID
     });
   } catch (err) {
     console.error('Error starting new voting session:', err);
@@ -7277,7 +7284,7 @@ app.put('/api/community-members/:userId/promote', async (req, res) => {
 app.post('/api/voting-settings/promote-top3', async (req, res) => {
   try {
     const pool = await sql.connect(config);
-    
+
     // Get top 3 nominees by votes for the latest session
     const topNominees = await pool.request().query(`
       SELECT TOP 3 n.NomineeID, COUNT(v.VoteID) AS VoteCount
@@ -7290,8 +7297,8 @@ app.post('/api/voting-settings/promote-top3', async (req, res) => {
     `);
 
     if (topNominees.recordset.length === 0) {
-      return res.status(400).json({ 
-        error: 'No eligible nominees found to promote. At least one nominee must have votes.' 
+      return res.status(400).json({
+        error: 'No eligible nominees found to promote. At least one nominee must have votes.'
       });
     }
 
@@ -7300,7 +7307,7 @@ app.post('/api/voting-settings/promote-top3', async (req, res) => {
     const optionalNominees = topNominees.recordset.slice(1, 3); // Next 2 are optional
 
     const promotionResults = [];
-    
+
     // Promote required top nominee (must have votes)
     for (const nominee of requiredNominees) {
       const result = await pool.request()
@@ -7353,7 +7360,7 @@ app.post('/api/voting-settings/promote-top3', async (req, res) => {
       success: true,
       message: `Successfully promoted ${promotionResults.length} user(s) to Community Leaders`,
       results: promotionResults,
-      note: promotionResults.length === 1 
+      note: promotionResults.length === 1
         ? 'Only the top nominee was promoted (minimum requirement met)'
         : `Top ${promotionResults.length} nominees promoted`
     });
@@ -7431,7 +7438,7 @@ app.get('/api/voting-settings/has-ended', async (req, res) => {
     }
 
     const endDate = settingsResult.recordset[0].EndDate;
-    
+
     // Compare dates directly from database (no string conversion issues)
     const hasEnded = currentTime > endDate;
 
@@ -7561,7 +7568,7 @@ app.get('/api/voting-settings/is-top3/:userId', async (req, res) => {
 
   try {
     const pool = await sql.connect(config);
-    
+
     // Get top 3 nominees with votes for current session
     const result = await pool.request().query(`
       SELECT TOP 3 n.NomineeID, COUNT(v.VoteID) AS VoteCount
@@ -7579,11 +7586,11 @@ app.get('/api/voting-settings/is-top3/:userId', async (req, res) => {
 
     // Extract just the user IDs from top 3
     const top3UserIds = result.recordset.map(row => row.NomineeID);
-    
+
     // Check if the requested user is in top 3
     const isInTop3 = top3UserIds.includes(userId);
 
-    res.json({ 
+    res.json({
       isInTop3,
       top3UserIds,
       position: isInTop3 ? top3UserIds.indexOf(userId) + 1 : null
