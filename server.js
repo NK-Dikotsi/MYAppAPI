@@ -7745,33 +7745,31 @@ app.put('/api/support/items/:type/:id/status', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-// Route to set role to Volunteer
-app.patch('/user/:id/set-volunteer', async (req, res) => {
-    const userId = req.params.id;
+app.patch('/api/user/:userId/set-volunteer', async (req, res) => {
+  const { userId } = req.params;
 
-    try {
-        const pool = await sql.connect(dbConfig);
+  try {
+    const pool = await sql.connect(config);
 
-        // Update role to Volunteer
-        const result = await pool.request()
-            .input('UserID', sql.Int, userId)
-            .query(`
-                UPDATE [dbo].[CommunityMember]
-                SET [Role] = 'Volunteer'
-                WHERE [UserID] = @UserID;
-            `);
+    // Check if user exists
+    const userResult = await pool.request()
+      .input('UserID', sql.BigInt, userId)
+      .query('SELECT UserID FROM CommunityMember WHERE UserID = @UserID');
 
-        if (result.rowsAffected[0] === 0) {
-            return res.status(404).json({ error: "User not found" });
-        }
-
-        res.status(200).json({ message: "Role set to Volunteer successfully" });
-
-    } catch (err) {
-        console.error("Database error:", err);
-        res.status(500).json({ error: "Internal server error" });
+    if (userResult.recordset.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
     }
-    // Remove the sql.close() call if you're using connection pooling
+
+    // Update role to Volunteer
+    await pool.request()
+      .input('UserID', sql.BigInt, userId)
+      .query('UPDATE CommunityMember SET Role = \'Volunteer\' WHERE UserID = @UserID');
+
+    res.json({ success: true, message: 'Role set to Volunteer successfully' });
+  } catch (err) {
+    console.error('Error setting volunteer role:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Get support statistics
