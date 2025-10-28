@@ -2401,8 +2401,7 @@ app.get('/getNotification', async (req, res) => {
     const pool = await sql.connect(config);
     const result = await pool.request()
       .input('userId', sql.BigInt, userId)
-      .query(`SELECT * FROM [dbo].[Notification] WHERE userId = @userId AND readStatus='unread'
-        ORDER BY dateCreated DESC`);
+      .query(`SELECT n.* FROM [dbo].[Notification] n WHERE n.userId = @userId AND n.readStatus = 'unread' AND EXISTS ( SELECT 1 FROM [dbo].[Report] r WHERE r.ReporterID = n.userId AND r.Report_Status <> 'On-going' ) ORDER BY n.createdDate DESC;`);
 
     if (result.recordset.length === 0) {
       return res.status(404).json({ message: 'No notifications found.' });
