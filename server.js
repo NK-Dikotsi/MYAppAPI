@@ -6376,7 +6376,7 @@ app.get('/getReportsByUser', async (req, res) => {
           ReportID, 
           emergencyType, 
           emerDescription, 
-          Report_Location, 
+          suburbName, 
           Report_Status, 
           dateReported
         FROM Report
