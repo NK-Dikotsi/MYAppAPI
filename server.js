@@ -2409,9 +2409,9 @@ WHERE n.userId = @userId
       SELECT 1
       FROM [dbo].[Report] r
       WHERE r.ReporterID = n.userId
-        AND r.Report_Status <> 'On-going'
+        AND LTRIM(RTRIM(UPPER(r.Report_Status))) <> 'ON-GOING'
   )
-ORDER BY n.dateCreated DESC; `);
+ORDER BY n.dateCreated DESC`);
 
     if (result.recordset.length === 0) {
       return res.status(404).json({ message: 'No notifications found.' });
